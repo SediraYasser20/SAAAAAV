@@ -330,7 +330,7 @@ if ($action == 'add' && $permissiontoadd) {
             // FIXED: Correct MO detection syntax
             $is_mo_line = false;
             if (empty($current_order_line->fk_product)) {
-                $is_mo_line = (strpos($current_order_line->description, 'Costum-PC') !== false) && 
+                $is_mo_line = (strpos($current_order_line->description, 'MO') !== false) && 
                               (strpos($current_order_line->description, '(Fabrication)') !== false);
             }
 
@@ -453,7 +453,7 @@ if ($action == 'add' && $permissiontoadd) {
                 // Determine the correct product ID for this line
                 $is_mo_line_for_add = false;
                 if (empty($current_order_line_for_add->fk_product)) {
-                    $is_mo_line_for_add = (strpos($current_order_line_for_add->description, 'Costum-PC') !== false) && 
+                    $is_mo_line_for_add = (strpos($current_order_line_for_add->description, 'MO') !== false) && 
                                          (strpos($current_order_line_for_add->description, '(Fabrication)') !== false);
                 }
                 $fk_product_for_add = $is_mo_line_for_add ? 31 : $current_order_line_for_add->fk_product;
@@ -532,7 +532,7 @@ if ($action == 'add' && $permissiontoadd) {
                     if ($corresponding_order_line_final) {
                         $is_mo_line_final = false;
                         if (empty($corresponding_order_line_final->fk_product)) {
-                            $is_mo_line_final = (strpos($corresponding_order_line_final->description, 'Costum-PC') !== false) && 
+                            $is_mo_line_final = (strpos($corresponding_order_line_final->description, 'MO') !== false) && 
                                                (strpos($corresponding_order_line_final->description, '(Fabrication)') !== false);
                         }
                         if ($is_mo_line_final) {
@@ -1313,7 +1313,7 @@ if ($origin == 'commande' && isset($object->id) && $object->id > 0 && !empty($ob
         // $orderLineDataInMemory is a snapshot. We fetch the actual line for update to avoid issues with partial objects.
         $is_mo_line_for_update = false;
         if (empty($orderLineDataInMemory->fk_product) && isset($orderLineDataInMemory->description) &&
-            strpos($orderLineDataInMemory->description, 'Costum-PC') === 0 &&  // Check starts with MO
+            strpos($orderLineDataInMemory->description, 'MO') === 0 &&  // Check starts with MO
             strpos($orderLineDataInMemory->description, '(Fabrication)') !== false) { // Check contains (Fabrication)
             $is_mo_line_for_update = true;
         }
@@ -1456,13 +1456,13 @@ if ($origin == 'commande' && isset($object->id) && $object->id > 0 && !empty($ob
                 // Identify MO line based *solely* on description pattern now,
                 // as fk_product would have been updated to 31 for MO lines in the preceding step (before this loop).
                 if (isset($line->description) && 
-                    strpos($line->description, 'Costum-PC') === 0 &&  // Check if description starts with "MO"
+                    strpos($line->description, 'MO') === 0 &&  // Check if description starts with "MO"
                     strpos($line->description, '(Fabrication)') !== false) { // Check if description contains "(Fabrication)"
                     
                     $is_mo_line = true; // This line is identified as an MO line
                     
                     // If it's an MO line, try to extract the MO reference (serial number) from its description
-                    if (preg_match('/^(Costum-PC\S+)/', trim($line->description), $matches)) {
+                    if (preg_match('/^(MO\S+)/', trim($line->description), $matches)) {
                         $target_mo_serial_ref = $matches[1];
                         // Optional: Log successful extraction for debugging
                         // dol_syslog("expedition/card.php (Display Loop): MO Line identified for Order Line ID: " . $line->id . ". Description: '" . $line->description . "'. Extracted MO Ref (Serial): '" . $target_mo_serial_ref . "'.", LOG_DEBUG);
