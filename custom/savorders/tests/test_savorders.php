@@ -348,6 +348,120 @@ class TestSavordersActions extends PHPUnit\Framework\TestCase
         // 7. Assert non-batch stock correction attempted.
     }
 
+    // == Product Delivery (Customer) - Enhanced Tests ==
+
+    public function testProductDeliveryCustomer_CorrectSerialInStock()
+    {
+        $this->markTestIncomplete("Full environment mocking for doActions is complex. This test outlines the scenario for correct serial, in stock.");
+        // 1. Create a product that uses batch tracking.
+        // $product = $this->createTestProduct(true, 'PRODSAVOK');
+        // 2. Create a test customer order. Mark as SAV. Add the product.
+        // $order = $this->createTestOrder(false);
+        // $order->array_options['options_savorders_sav'] = 1;
+        // $order->array_options['options_savorders_status'] = savorders::RECIEVED_CUSTOMER; // Prerequisite status
+        // $this->addLineToTestOrder($order, $product, 1);
+        // 3. Setup: Warehouse W1. Product $product has batch 'SN_OK_STOCK' with qty 1 in W1.
+        //    (This would involve direct DB manipulation or robust mocking of product/stock classes)
+        //    Example: $this->db->query("INSERT INTO ".MAIN_DB_PREFIX."product_batch (fk_product, batch, qty, fk_entrepot) VALUES (".$product->id.", 'SN_OK_STOCK', 1, 1)");
+        // 4. Mock GETPOST data for 'createdelivery_valid' action:
+        //    Serial: 'SN_OK_STOCK', Qty: 1, Warehouse: W1 (e.g., ID 1)
+        // $this->mockGetPost($product->id, 'SN_OK_STOCK', 1, 1);
+        // 5. Call doActions:
+        // $action = 'createdelivery_valid';
+        // $parameters = ['context' => 'ordercard'];
+        // $hookmanager = null; // Mock if necessary
+        // $result = $this->actionssavorders->doActions($parameters, $order, $action, $hookmanager);
+        // 6. Assertions:
+        //    - No error messages (e.g., check $GLOBALS['dolibarr_main_msg_errors'] or a mocked event message system).
+        //    - Stock for 'SN_OK_STOCK' in W1 is now 0. (Verify DB or via mocked stock methods).
+        //    - Order status is savorders::DELIVERED_CUSTOMER.
+        //    - History is updated.
+        //    - $action should not have been changed (remains 'createdelivery_valid' or becomes null/redirect).
+        // Cleanup: Delete the test batch entry.
+        // $this->db->query("DELETE FROM ".MAIN_DB_PREFIX."product_batch WHERE batch = 'SN_OK_STOCK'");
+    }
+
+    public function testProductDeliveryCustomer_IncorrectSerialNonExistent()
+    {
+        $this->markTestIncomplete("Full environment mocking for doActions is complex. This test outlines for non-existent serial.");
+        // 1. Product with batch tracking, order, SAV status, line.
+        // $product = $this->createTestProduct(true, 'PRODSAVBADSERIAL');
+        // $order = $this->createTestOrder(false);
+        // $order->array_options['options_savorders_sav'] = 1;
+        // $order->array_options['options_savorders_status'] = savorders::RECIEVED_CUSTOMER;
+        // $this->addLineToTestOrder($order, $product, 1);
+        // 2. Setup: Serial 'SN_NON_EXISTENT' does not exist for $product->id in product_lot.
+        // 3. Mock GETPOST: Serial 'SN_NON_EXISTENT', Qty: 1, Warehouse: W1.
+        // $this->mockGetPost($product->id, 'SN_NON_EXISTENT', 1, 1);
+        // 4. Call doActions for 'createdelivery_valid'.
+        // $action = 'createdelivery_valid'; // Will be changed by the method on error
+        // // ... call doActions ...
+        // 5. Assertions:
+        //    - Error message "BatchDoesNotExist" is set. (Inspect $GLOBALS['dolibarr_main_msg_errors'] or similar).
+        //    - $action variable is changed to 'createdelivery' (indicating validation failure).
+        //    - Stock not changed. Order status not changed.
+    }
+
+    public function testProductDeliveryCustomer_CorrectSerialNotInSelectedWarehouse()
+    {
+        $this->markTestIncomplete("Full environment mocking for doActions is complex. This test outlines for serial in wrong warehouse.");
+        // 1. Product with batch tracking, order, SAV status, line.
+        // $product = $this->createTestProduct(true, 'PRODSAVWRONGWH');
+        // $order = $this->createTestOrder(false);
+        // $order->array_options['options_savorders_sav'] = 1;
+        // $order->array_options['options_savorders_status'] = savorders::RECIEVED_CUSTOMER;
+        // $this->addLineToTestOrder($order, $product, 1);
+        // 2. Setup: Warehouse W1 (ID 1), W2 (ID 2). Product $product has batch 'SN_WRONG_WH' with qty 1 in W2.
+        //    Example: $this->db->query("INSERT INTO ".MAIN_DB_PREFIX."product_batch (fk_product, batch, qty, fk_entrepot) VALUES (".$product->id.", 'SN_WRONG_WH', 1, 2)");
+        // 3. Mock GETPOST: Serial 'SN_WRONG_WH', Qty: 1, Warehouse: W1 (attempting delivery from wrong warehouse).
+        // $this->mockGetPost($product->id, 'SN_WRONG_WH', 1, 1);
+        // 4. Call doActions for 'createdelivery_valid'.
+        // // ... call doActions ...
+        // 5. Assertions:
+        //    - Error message "BatchNotInStock" (for the selected warehouse) is set.
+        //    - $action changed to 'createdelivery'.
+        // Cleanup: $this->db->query("DELETE FROM ".MAIN_DB_PREFIX."product_batch WHERE batch = 'SN_WRONG_WH'");
+    }
+
+    public function testProductDeliveryCustomer_CorrectSerialZeroQuantityInWarehouse()
+    {
+        $this->markTestIncomplete("Full environment mocking for doActions is complex. This test outlines for serial with zero quantity.");
+        // 1. Product with batch tracking, order, SAV status, line.
+        // $product = $this->createTestProduct(true, 'PRODSAVZEROQTY');
+        // $order = $this->createTestOrder(false);
+        // $order->array_options['options_savorders_sav'] = 1;
+        // $order->array_options['options_savorders_status'] = savorders::RECIEVED_CUSTOMER;
+        // $this->addLineToTestOrder($order, $product, 1);
+        // 2. Setup: Warehouse W1. Product $product has batch 'SN_ZERO_QTY' with qty 0 in W1.
+        //    Example: $this->db->query("INSERT INTO ".MAIN_DB_PREFIX."product_batch (fk_product, batch, qty, fk_entrepot) VALUES (".$product->id.", 'SN_ZERO_QTY', 0, 1)");
+        // 3. Mock GETPOST: Serial 'SN_ZERO_QTY', Qty: 1, Warehouse: W1.
+        // $this->mockGetPost($product->id, 'SN_ZERO_QTY', 1, 1);
+        // 4. Call doActions for 'createdelivery_valid'.
+        // // ... call doActions ...
+        // 5. Assertions:
+        //    - Error message "BatchNotInStock" is set.
+        //    - $action changed to 'createdelivery'.
+        // Cleanup: $this->db->query("DELETE FROM ".MAIN_DB_PREFIX."product_batch WHERE batch = 'SN_ZERO_QTY'");
+    }
+
+    public function testProductDeliveryCustomer_NoSerialForBatchProduct()
+    {
+        $this->markTestIncomplete("Full environment mocking for doActions is complex. This test outlines for missing serial for batch product.");
+        // 1. Product with batch tracking, order, SAV status, line.
+        // $product = $this->createTestProduct(true, 'PRODSAVNOSERIAL');
+        // $order = $this->createTestOrder(false);
+        // $order->array_options['options_savorders_sav'] = 1;
+        // $order->array_options['options_savorders_status'] = savorders::RECIEVED_CUSTOMER;
+        // $this->addLineToTestOrder($order, $product, 1);
+        // 2. Mock GETPOST: Serial '', Qty: 1, Warehouse: W1.
+        // $this->mockGetPost($product->id, '', 1, 1); // Empty serial
+        // 3. Call doActions for 'createdelivery_valid'.
+        // // ... call doActions ...
+        // 4. Assertions:
+        //    - Error message "ErrorFieldRequired" for "batch_number" is set.
+        //    - $action changed to 'createdelivery'.
+    }
+
     // Future: Add tests for supplier order scenarios if direct DB/GETPOST mocking proves feasible.
     // The core logic is shared, so these customer tests provide good initial coverage.
 
