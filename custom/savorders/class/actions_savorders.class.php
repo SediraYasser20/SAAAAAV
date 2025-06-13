@@ -11,293 +11,311 @@ dol_include_once('/savorders/class/savorders.class.php');
  */
 class Actionssavorders
 {
-	/**
-	 * @var array Hook results. Propagated to $hookmanager->resArray for later reuse
-	 */
-	public $results = array();
+    /**
+     * @var array Hook results. Propagated to $hookmanager->resArray for later reuse
+     */
+    public $results = array();
 
-	/**
-	 * @var string String displayed by executeHook() immediately after return
-	 */
-	public $resprints;
+    /**
+     * @var string String displayed by executeHook() immediately after return
+     */
+    public $resprints;
 
-	/**
-	 * @var array Errors
-	 */
-	public $errors = array();
+    /**
+     * @var array Errors
+     */
+    public $errors = array();
 
+    /**
+     * Constructor
+     */
+    public function __construct()
+    {
+    }
 
-	/**
-	 * Constructor
-	 */
-	public function __construct()
-	{
-	}
+    public function doActions($parameters, &$object, &$action, $hookmanager)
+    {
+        global $langs, $db, $user, $conf;
 
-	public function doActions($parameters, &$object, &$action, $hookmanager)
-	{
-		global $langs, $db, $user, $conf;
-
-		$langs->loadLangs(array('stocks'));
+        $langs->loadLangs(array('stocks'));
         $langs->load('savorders@savorders');
 
-		$savorders = new savorders($db);
+        $savorders = new savorders($db);
 
-		// d($parameters,false);
+        $tmparray = ['receiptofproduct_valid', 'createdelivery_valid', 'deliveredtosupplier_valid', 'receivedfromsupplier_valid'];
 
-		$tmparray = ['receiptofproduct_valid', 'createdelivery_valid', 'deliveredtosupplier_valid', 'receivedfromsupplier_valid'];
+        $ngtmpdebug = GETPOST('ngtmpdebug', 'int');
+        if($ngtmpdebug) {
+            echo '<pre>';
+            print_r($parameters);
+            echo '</pre>';
+            
+            ini_set('display_startup_errors', 1);
+            ini_set('display_errors', 1);
+            error_reporting(-1);
+        }
 
-		$ngtmpdebug = GETPOST('ngtmpdebug', 'int');
-		if($ngtmpdebug) {
-			echo '<pre>';
-			print_r($parameters);
-			echo '</pre>';
-			
-		    ini_set('display_startup_errors', 1);
-			ini_set('display_errors', 1);
-			error_reporting(-1);
+        if ($object && (in_array('ordercard', explode(':', $parameters['context'])) || in_array('ordersuppliercard', explode(':', $parameters['context']))) && in_array($action, $tmparray)) {
 
-			// echo '<pre>';
-			// print_r($object);
-			// echo '</pre>';
-		}
+            $error = 0;
+            $now = dol_now();
 
-		if ($object && (in_array('ordercard', explode(':', $parameters['context'])) || in_array('ordersuppliercard', explode(':', $parameters['context']))) && in_array($action, $tmparray)) {
+            $savorders_date = '';
 
-			$error = 0;
-			$now = dol_now();
+            global $savorders_date;
 
-			$savorders_date = '';
+            $tmpdate = dol_mktime(0,0,0, GETPOST('savorders_datemonth','int'), GETPOST('savorders_dateday','int'), GETPOST('savorders_dateyear','int'));
+            
+            $savorders_date = dol_print_date($tmpdate, 'day');
 
-			global $savorders_date;
+            $cancel = GETPOST('cancel', 'alpha');
 
-			$tmpdate = dol_mktime(0,0,0, GETPOST('savorders_datemonth','int'), GETPOST('savorders_dateday','int'), GETPOST('savorders_dateyear','int'));
-			
-			$savorders_date = dol_print_date($tmpdate, 'day');
+            $novalidaction = str_replace("_valid", "", $action);
 
-			$cancel = GETPOST('cancel', 'alpha');
+            $s = GETPOST('savorders_data', 'array');
 
-			$novalidaction = str_replace("_valid", "", $action);
+            $savorders_sav = $object->array_options["options_savorders_sav"];
+            $savorders_status = $object->array_options["options_savorders_status"];
 
-			$s = GETPOST('savorders_data', 'array');
+            if(!$savorders_sav || $cancel) return 0;
 
-			$savorders_sav = $object->array_options["options_savorders_sav"];
-	        $savorders_status = $object->array_options["options_savorders_status"];
+            $idwarehouse = isset($conf->global->SAVORDERS_ADMIN_IDWAREHOUSE) ? $conf->global->SAVORDERS_ADMIN_IDWAREHOUSE : 0;
 
-	        if(!$savorders_sav || $cancel) return 0;
+            if(($novalidaction == 'receiptofproduct' || $novalidaction == 'deliveredtosupplier') && $idwarehouse <= 0) {
+                $error++;
+                $action = $novalidaction;
+            }
 
-			$idwarehouse = isset($conf->global->SAVORDERS_ADMIN_IDWAREHOUSE) ? $conf->global->SAVORDERS_ADMIN_IDWAREHOUSE : 0;
+            $commande = $object;
 
-			if(($novalidaction == 'receiptofproduct' || $novalidaction == 'deliveredtosupplier') && $idwarehouse <= 0) {
-				$error++;
-				$action = $novalidaction;
-			}
+            $nblines = count($commande->lines);
 
-			$commande = $object;
+            if($object->element == 'order_supplier') {
+                $labelmouve = ($novalidaction == 'deliveredtosupplier') ? $langs->trans('ProductDeliveredToSupplier') : $langs->trans('ProductReceivedFromSupplier');
+            } else {
+                $labelmouve = ($novalidaction == 'receiptofproduct') ? $langs->trans('ProductReceivedFromCustomer') : $langs->trans('ProductDeliveredToCustomer');
+            }
 
-			$nblines = count($commande->lines);
+            $origin_element = '';
+            $origin_id = null;
 
-			if($object->element == 'order_supplier') {
-				$labelmouve = ($novalidaction == 'deliveredtosupplier') ? $langs->trans('ProductDeliveredToSupplier') : $langs->trans('ProductReceivedFromSupplier');
-			} else {
-				$labelmouve = ($novalidaction == 'receiptofproduct') ? $langs->trans('ProductReceivedFromCustomer') : $langs->trans('ProductDeliveredToCustomer');
-			}
+            if($object->element == 'order_supplier') {
+                $mouvement = ($novalidaction == 'deliveredtosupplier') ? 1 : 0; // 0 : Add / 1 : Delete
+            } else {
+                $mouvement = ($novalidaction == 'receiptofproduct') ? 0 : 1; // 0 : Add / 1 : Delete
+            }
 
-			$origin_element = '';
-			$origin_id = null;
+            $texttoadd = '';
+            if(isset($object->array_options["options_savorders_history"]))
+                $texttoadd = $object->array_options["options_savorders_history"];
 
-			if($object->element == 'order_supplier') {
-				$mouvement = ($novalidaction == 'deliveredtosupplier') ? 1 : 0; // 0 : Add / 1 : Delete
-			} else {
-				$mouvement = ($novalidaction == 'receiptofproduct') ? 0 : 1; // 0 : Add / 1 : Delete
-			}
+            if($novalidaction == 'createdelivery' || $novalidaction == 'receivedfromsupplier') {
+                $texttoadd .= '<br>';
+            }
 
+            $oneadded = 0;
 
-			// $createdoc = $savorders->generateReceptionDocument($action, $commande);
+            if(!$error)
+            for ($i = 0; $i < $nblines; $i++) {
+                if (empty($commande->lines[$i]->fk_product)) {
+                    continue;
+                }
 
+                $objprod = new Product($db);
+                $objprod->fetch($commande->lines[$i]->fk_product);
 
-			$texttoadd = '';
-			if(isset($object->array_options["options_savorders_history"]))
-				$texttoadd = $object->array_options["options_savorders_history"];
+                if($objprod->type != Product::TYPE_PRODUCT) continue;
 
+                $tmid = $commande->lines[$i]->fk_product;
 
-			if($novalidaction == 'createdelivery' || $novalidaction == 'receivedfromsupplier') {
-				$texttoadd .= '<br>';
-			}
+                $warehouse  = $s && isset($s[$tmid]) && isset($s[$tmid]['warehouse']) ? $s[$tmid]['warehouse'] : 0;
+                $qty        = $s && isset($s[$tmid]) && isset($s[$tmid]['qty']) ? $s[$tmid]['qty'] : $commande->lines[$i]->qty;
 
-			$oneadded = 0;
+                if($novalidaction == 'receiptofproduct' || $novalidaction == 'deliveredtosupplier') {
+                    $warehouse = $idwarehouse;
+                }
 
-			if(!$error)
-			for ($i = 0; $i < $nblines; $i++) {
-				if (empty($commande->lines[$i]->fk_product)) {
-					continue;
-				}
+                if(($novalidaction == 'createdelivery') && $warehouse <= 0) {
+                    setEventMessages($langs->trans("ErrorFieldRequired", $langs->transnoentitiesnoconv("Warehouse")), null, 'errors');
+                    $error++;
+                }
 
-				$objprod = new Product($db);
-				$objprod->fetch($commande->lines[$i]->fk_product);
+                $txlabelmovement = '(SAV) '.$objprod->ref .': '. $labelmouve;
 
-				if($objprod->type != Product::TYPE_PRODUCT) continue;
+                // Fetch the PMP for the product
+                $pmp = $objprod->pmp;
 
-				$tmid = $commande->lines[$i]->fk_product;
+                if ($objprod->hasbatch()) {
 
-				$warehouse 	= $s && isset($s[$tmid]) && isset($s[$tmid]['warehouse']) ? $s[$tmid]['warehouse'] : 0;
-				// $batch 	= $s && isset($s[$tmid]) && isset($s[$tmid]['batch']) ? $s[$tmid]['batch'] : '';
-				$qty 	= $s && isset($s[$tmid]) && isset($s[$tmid]['qty']) ? $s[$tmid]['qty'] : $commande->lines[$i]->qty;
+                    $qty = ($qty > $commande->lines[$i]->qty) ? $commande->lines[$i]->qty : $qty;
 
-				if($novalidaction == 'receiptofproduct' || $novalidaction == 'deliveredtosupplier') {
-					$warehouse = $idwarehouse;
-				}
+                    if($qty)
+                    for ($z=0; $z < $qty; $z++) { 
+                        $batch = $s && isset($s[$tmid]) && isset($s[$tmid]['batch'][$z]) ? $s[$tmid]['batch'][$z] : '';
 
-				// if ($objprod->hasbatch() && !$batch) {
-				// 	setEventMessages($langs->trans("ErrorFieldRequired", $langs->transnoentitiesnoconv("batch_number")), null, 'errors');
-				// 	$error++;
-				// }
+                        if(!$batch && $z == 0) {
+                            setEventMessages($langs->trans("ErrorFieldRequired", $langs->transnoentitiesnoconv("batch_number")), null, 'errors');
+                            $error++;
+                            break;
+                        }
 
-				if(($novalidaction == 'createdelivery') && $warehouse <= 0) {
-					setEventMessages($langs->trans("ErrorFieldRequired", $langs->transnoentitiesnoconv("Warehouse")), null, 'errors');
-					$error++;
-				}
+                        if(!$error && $batch) {
+                            // Check if batch exists for receiptofproduct OR createdelivery
+                            if ($novalidaction == 'receiptofproduct' || $novalidaction == 'createdelivery') {
+                                $lot = new ProductLot($db);
+                                $res = $lot->fetch(0, $objprod->id, $batch);
+                                if ($res <= 0) {
+                                    setEventMessages($langs->trans("BatchDoesNotExist", $batch), null, 'errors');
+                                    $error++;
+                                    break;
+                                }
+                                
+                                // Additional check for createdelivery: verify stock availability
+                                if ($novalidaction == 'createdelivery') {
+                                    // Check stock quantity for this batch in the selected warehouse
+                                    $sql = "SELECT qty FROM " . MAIN_DB_PREFIX . "product_batch pb";
+                                    $sql .= " WHERE pb.fk_product = " . (int)$objprod->id;
+                                    $sql .= " AND pb.batch = '" . $db->escape($batch) . "'";
+                                    $sql .= " AND pb.fk_warehouse = " . (int)$warehouse;
+                                    
+                                    $resql = $db->query($sql);
+                                    if ($resql) {
+                                        $obj_batch = $db->fetch_object($resql);
+                                        if (!$obj_batch || $obj_batch->qty <= 0) {
+                                            setEventMessages($langs->trans("BatchNotInStock", $batch), null, 'errors');
+                                            $error++;
+                                            break;
+                                        }
+                                        // Optional: Check if requested quantity is available
+                                        // if ($obj_batch->qty < 1) {
+                                        //     setEventMessages($langs->trans("InsufficientBatchStock", $batch, $obj_batch->qty), null, 'errors');
+                                        //     $error++;
+                                        //     break;
+                                        // }
+                                    } else {
+                                        setEventMessages($langs->trans("ErrorCheckingBatchStock", $batch), null, 'errors');
+                                        $error++;
+                                        break;
+                                    }
+                                }
+                            }
 
-				$txlabelmovement = '(SAV) '.$objprod->ref .': '. $labelmouve;
+                            if (!$error) {
+                                $result = $objprod->correct_stock_batch(
+                                    $user,
+                                    $warehouse,
+                                    1, // Correcting one unit at a time for batch products
+                                    $mouvement,
+                                    $txlabelmovement, // label movement
+                                    $pmp, // Use PMP as price unit
+                                    $d_eatby = '',
+                                    $d_sellby = '',
+                                    $batch,
+                                    $inventorycode = '',
+                                    $origin_element,
+                                    $origin_id,
+                                    $disablestockchangeforsubproduct = 0
+                                ); // We do not change value of stock for a correction
 
+                                if($result > 0) {
+                                    $this->addLineHistoryToSavCommande($texttoadd, $novalidaction, $objprod, $batch);
+                                    $oneadded++;
+                                } else {
+                                    $error++;
+                                    break;
+                                }
+                            }
+                        }
 
-				if ($objprod->hasbatch()) {
+                    }
 
-					$qty = ($qty > $commande->lines[$i]->qty) ? $commande->lines[$i]->qty : $qty;
+                } else {
+                    if(!$error && $qty) {
+                        $result = $objprod->correct_stock(
+                            $user,
+                            $warehouse,
+                            $qty,
+                            $mouvement,
+                            $txlabelmovement,
+                            $pmp, // Use PMP as price unit
+                            $inventorycode = '',
+                            $origin_element,
+                            $origin_id,
+                            $disablestockchangeforsubproduct = 0
+                        ); // We do not change value of stock for a correction
 
-					if($qty)
-					for ($z=0; $z < $qty; $z++) { 
-						$batch = $s && isset($s[$tmid]) && isset($s[$tmid]['batch'][$z]) ? $s[$tmid]['batch'][$z] : '';
+                        if($result > 0) {
+                            $this->addLineHistoryToSavCommande($texttoadd, $novalidaction, $objprod);
+                            $oneadded++;
+                        } else {
+                            $error++;
+                            break;
+                        }
+                    }
+                }
 
-						if(!$batch && $z == 0) {
-							setEventMessages($langs->trans("ErrorFieldRequired", $langs->transnoentitiesnoconv("batch_number")), null, 'errors');
-							$error++;
-							break;
-						}
+            }
 
-						if(!$error && $batch) {
-							$result = $objprod->correct_stock_batch(
-								$user,
-								$warehouse,
-								$tmpqty = 1,
-								$mouvement,
-								$txlabelmovement, // label movement
-								$priceunit = 0,
-								$d_eatby = '',
-								$d_sellby = '',
-								$batch,
-								$inventorycode = '',
-								$origin_element,
-								$origin_id,
-								$disablestockchangeforsubproduct = 0
-							); // We do not change value of stock for a correction
+            if(!$error && $oneadded) {
 
-							if($result > 0) {
-								$this->addLineHistoryToSavCommande($texttoadd, $novalidaction, $objprod, $batch);
-								$oneadded++;
-							} else {
-								$error++;
-								break;
-							}
-						}
+                if($object->element == 'order_supplier') {
+                    $savorders_status = ($novalidaction == 'deliveredtosupplier') ? $savorders::DELIVERED_SUPPLIER : $savorders::RECEIVED_SUPPLIER;
+                } else {
+                    $savorders_status = ($novalidaction == 'receiptofproduct') ? $savorders::RECIEVED_CUSTOMER : $savorders::DELIVERED_CUSTOMER;
+                }
 
-					}
+                $texttoadd = str_replace(['<span class="savorders_history_td">', '</span>'], ' ', $texttoadd);
 
-				} else {
-					if(!$error && $qty) {
-						$result = $objprod->correct_stock(
-							$user,
-							$warehouse,
-							$qty,
-							$mouvement,
-							$txlabelmovement,
-							$priceunit = 0,
-							$inventorycode = '',
-							$origin_element,
-							$origin_id,
-							$disablestockchangeforsubproduct = 0
-						); // We do not change value of stock for a correction
+                $extrafieldtxt = '<span class="savorders_history_td">';
+                $extrafieldtxt .= $texttoadd;
+                $extrafieldtxt .= '</span>';
 
-						if($result > 0) {
-							$this->addLineHistoryToSavCommande($texttoadd, $novalidaction, $objprod);
-							$oneadded++;
-						} else {
-							$error++;
-							break;
-						}
-					}
-				}
+                $object->array_options["options_savorders_history"] = $extrafieldtxt;
+                $object->array_options["options_savorders_status"] = $savorders_status;
+                $result = $object->insertExtraFields();
+                if(!$result) $error++;
+            }
 
-			}
+            if($error){
+                setEventMessages($objprod->errors, $object->errors, 'errors');
+                header('Location: '.$_SERVER['PHP_SELF'].'?id='.$object->id.'&action='.$novalidaction);
+            } else {
+                if($oneadded)
+                    setEventMessages($langs->trans("RecordCreatedSuccessfully"), null, 'mesgs');
+                header('Location: '.$_SERVER['PHP_SELF'].'?id='.$object->id);
+                exit();
+            }
 
+        }
+    }
 
-			if(!$error && $oneadded) {
-
-				if($object->element == 'order_supplier') {
-					$savorders_status = ($novalidaction == 'deliveredtosupplier') ? $savorders::DELIVERED_SUPPLIER : $savorders::RECEIVED_SUPPLIER;
-				} else {
-					$savorders_status = ($novalidaction == 'receiptofproduct') ? $savorders::RECIEVED_CUSTOMER : $savorders::DELIVERED_CUSTOMER;
-				}
-
-				// d($texttoadd);
-
-				$texttoadd = str_replace(['<span class="savorders_history_td">', '</span>'], ' ', $texttoadd);
-
-				$extrafieldtxt = '<span class="savorders_history_td">';
-				$extrafieldtxt .= $texttoadd;
-				$extrafieldtxt .= '</span>';
-
-	            $object->array_options["options_savorders_history"] = $extrafieldtxt;
-	            $object->array_options["options_savorders_status"] = $savorders_status;
-	            $result = $object->insertExtraFields();
-	            if(!$result) $error++;
-			}
-
-			if($error){
-				setEventMessages($objprod->errors, $object->errors, 'errors');
-				header('Location: '.$_SERVER['PHP_SELF'].'?id='.$object->id.'&action='.$novalidaction);
-			} else {
-				if($oneadded)
-					setEventMessages($langs->trans("RecordCreatedSuccessfully"), null, 'mesgs');
-				header('Location: '.$_SERVER['PHP_SELF'].'?id='.$object->id);
-				exit();
-			}
-
-		}
-	}
-
-	
     public function addLineHistoryToSavCommande(&$texttoadd, $novalidaction, $objprod = '', $batch = '')
     {
-    	global $langs, $savorders_date;
+        global $langs, $savorders_date;
 
-    	// $texttoadd = ($texttoadd) ? $texttoadd."<br>" : $texttoadd;
-    	$texttoadd = $texttoadd;
+        $contenu = '- '.$savorders_date.': ';
 
-    	$contenu = '- '.$savorders_date.': ';
+        if($novalidaction == 'receiptofproduct' || $novalidaction == 'receivedfromsupplier') {
+            $contenu .= $langs->trans("OrderSavRecieveProduct");
+        }
+        elseif($novalidaction == 'createdelivery' || $novalidaction == 'deliveredtosupplier') {
+            $contenu .= $langs->trans("OrderSavDeliveryProduct");
+        }
 
-    	if($novalidaction == 'receiptofproduct' || $novalidaction == 'receivedfromsupplier') {
-			$contenu .= $langs->trans("OrderSavRecieveProduct");
-		}
-		elseif($novalidaction == 'createdelivery' || $novalidaction == 'deliveredtosupplier') {
-			$contenu .= $langs->trans("OrderSavDeliveryProduct");
-		}
+        $contenu .= ' <a target="_blank" href="'.dol_buildpath('/product/card.php?id='.$objprod->id, 1).'">';
+        $contenu .= '<b>'.$objprod->ref.'</b>';
+        $contenu .= '</a>';
 
-		$contenu .= ' <a target="_blank" href="'.dol_buildpath('/product/card.php?id='.$objprod->id, 1).'">';
-		$contenu .= '<b>'.$objprod->ref.'</b>';
-		$contenu .= '</a>';
+        if($batch) {
+            $contenu .=  ' N° <b>'.$batch.'</b>';
+        }
 
-		if($batch) {
-			$contenu .=  ' N° <b>'.$batch.'</b>';
-		}
+        $texttoadd .=  '<div class="savorders_history_txt " title="'.strip_tags($contenu).'">';
+        $texttoadd .= $contenu;
+        $texttoadd .=  '</div>';
+    }
 
-    	$texttoadd .=  '<div class="savorders_history_txt " title="'.strip_tags($contenu).'">';
-		$texttoadd .= $contenu;
-		$texttoadd .=  '</div>';
-
-	}
-
-	/**
+    /**
      * @param   array         	$parameters     Hook metadatas (context, etc...)
      * @param   Commande    	$object         The object to process
      * @param   string          $action         Current action (if set). Generally create or edit or null
@@ -313,257 +331,226 @@ class Actionssavorders
 
         $form = new Form($db);
 
-		$ngtmpdebug = GETPOST('ngtmpdebug', 'int');
-		if($ngtmpdebug) {
-			echo '<pre>';
-			print_r($parameters);
-			echo '</pre>';
+        $ngtmpdebug = GETPOST('ngtmpdebug', 'int');
+        if($ngtmpdebug) {
+            echo '<pre>';
+            print_r($parameters);
+            echo '</pre>';
 
-		    ini_set('display_startup_errors', 1);
-			ini_set('display_errors', 1);
-			error_reporting(-1);
-		}
+            ini_set('display_startup_errors', 1);
+            ini_set('display_errors', 1);
+            error_reporting(-1);
+        }
 
         if (in_array('ordercard', explode(':', $parameters['context'])) || in_array('ordersuppliercard', explode(':', $parameters['context']))) {
 
-			$s = GETPOST('savorders_data', 'array');
+            $s = GETPOST('savorders_data', 'array');
 
-        	$linktogo = $_SERVER["PHP_SELF"].'?id=' . $object->id;
+            $linktogo = $_SERVER["PHP_SELF"].'?id=' . $object->id;
 
-			$tmparray = ['receiptofproduct', 'createdelivery', 'deliveredtosupplier', 'receivedfromsupplier'];
+            $tmparray = ['receiptofproduct', 'createdelivery', 'deliveredtosupplier', 'receivedfromsupplier'];
 
-			if(in_array($action, $tmparray)) {
+            if(in_array($action, $tmparray)) {
 
-				?>
-				<script type="text/javascript">
-					$(document).ready(function() {
-						$('html, body').animate({
-							scrollTop: ($("#savorders_formconfirm").offset().top - 80)
-						}, 800);
-					});
-				</script>
-				<?php
+                ?>
+                <script type="text/javascript">
+                    $(document).ready(function() {
+                        $('html, body').animate({
+                            scrollTop: ($("#savorders_formconfirm").offset().top - 80)
+                        }, 800);
+                    });
+                </script>
+                <?php
 
-				if($object->element == 'order_supplier') {
-					$title = ($action == 'deliveredtosupplier') ? $langs->trans('ProductDeliveredToSupplier') : $langs->trans('ProductReceivedFromSupplier');
-				} else {
-					$title = ($action == 'receiptofproduct') ? $langs->trans('ProductReceivedFromCustomer') : $langs->trans('ProductDeliveredToCustomer');
-				}
+                if($object->element == 'order_supplier') {
+                    $title = ($action == 'deliveredtosupplier') ? $langs->trans('ProductDeliveredToSupplier') : $langs->trans('ProductReceivedFromSupplier');
+                } else {
+                    $title = ($action == 'receiptofproduct') ? $langs->trans('ProductReceivedFromCustomer') : $langs->trans('ProductDeliveredToCustomer');
+                }
 
-				$formproduct = new FormProduct($db);
+                $formproduct = new FormProduct($db);
 
-				$nblines = count($object->lines);
-				
-				// $formconfirm = '';
-				// $newselectedchoice = 'yes';
-				// $formquestion = array();
-				// d($formquestion);
-				// $formquestion = array(
-				// 	array('type' => 'text', 'name' => 'note_private', 'label' => $langs->trans("Note"), 'value' => '')
-				// 	,array('type' => 'other', 'name' => 'socid', 'label' => $langs->trans("SelectThirdParty"), 'value' => '' )
-				// 	,array('type' => 'other', 'name' => 'idwarehouse', 'label' => $langs->trans("SelectWarehouseForStockDecrease"), 'value' => $formproduct->selectWarehouses(GETPOST('idwarehouse', 'int') ?GETPOST('idwarehouse', 'int') : 'ifone', 'idwarehouse', '', 1, 0, 0, '', 0, $forcecombo))
-				// );
-				// print $form->formconfirm($_SERVER["PHP_SELF"].'?id='.$id, $langs->trans('Creerfacturesurmarge'), $langs->trans('ConfirmCreateFactureMarge', $commande->ref), 'confirm_facturemarge', $formquestion, 'yes', 1);
+                $nblines = count($object->lines);
+                
+                print '<div class="tagtable paddingtopbottomonly centpercent noborderspacing savorders_formconfirm" id="savorders_formconfirm">';
+                print_fiche_titre($title, '', $object->picto);
 
-				$idwarehouse = isset($conf->global->SAVORDERS_ADMIN_IDWAREHOUSE) ? $conf->global->SAVORDERS_ADMIN_IDWAREHOUSE : 0;
+                $idwarehouse = isset($conf->global->SAVORDERS_ADMIN_IDWAREHOUSE) ? $conf->global->SAVORDERS_ADMIN_IDWAREHOUSE : 0;
 
-				if($action == 'receiptofproduct' && $idwarehouse <= 0) {
-					// $msgtoshow = ($action == "receiptofproduct") ? 'SelectWarehouseForStockIncrease' : 'SelectWarehouseForStockDecrease';
-					// setEventMessages($langs->trans('SAV').': '.$langs->trans($msgtoshow).' '.$link, null, 'errors');
-					
-					$link = '<a href="'.dol_buildpath('savorders/admin/admin.php', 1).'" target="_blank">'.img_picto('', 'setup', '').' '.$langs->trans("Configuration").'</a>';
-					setEventMessages($langs->trans("ErrorFieldRequired", $langs->trans('SAV').' '.dol_htmlentitiesbr_decode($langs->trans('Warehouse'))).' '.$link, null, 'errors');
-					$error++;
+                if($action == 'receiptofproduct' && $idwarehouse <= 0) {
+                    $link = '<a href="'.dol_buildpath('savorders/admin/admin.php', 1).'" target="_blank">'.img_picto('', 'setup', '').' '.$langs->trans("Configuration").'</a>';
+                    setEventMessages($langs->trans("ErrorFieldRequired", $langs->trans('SAV').' '.dol_htmlentitiesbr_decode($langs->trans('Warehouse'))).' '.$link, null, 'errors');
+                    $error++;
+                }
 
-					// $action = $novalidaction;
-				}
+                print '<div class="tagtable paddingtopbottomonly centpercent noborderspacing savorders_formconfirm" id="savorders_formconfirm">';
+                print '<form method="POST" action="'.$linktogo.'" class="notoptoleftroright">'."\n";
+                print '<input type="hidden" name="action" value="'.$action.'_valid">'."\n";
+                print '<input type="hidden" name="token" value="'.(isset($_SESSION['newtoken']) ? $_SESSION['newtoken'] : '').'">'."\n";
 
+                $now = dol_now();
 
-				print '<div class="tagtable paddingtopbottomonly centpercent noborderspacing savorders_formconfirm" id="savorders_formconfirm">';
-				print_fiche_titre($title, '', $object->picto);
+                print '<table class="valid centpercent">';
+                    
+                    print '<tr>';
+                    print '<td class="left"><b>'.$langs->trans("Product").'</b></td>';
+                    print '<td class="left"><b>'.$langs->trans("batch_number").'</b></td>';
+                    print '<td class="left"><b>'.$langs->trans("Qty").'</b></td>';
 
-				$idwarehouse = isset($conf->global->SAVORDERS_ADMIN_IDWAREHOUSE) ? $conf->global->SAVORDERS_ADMIN_IDWAREHOUSE : 0;
-				// $dware = ($action == 'receiptofproduct') ? $idwarehouse : 0;
-				$dware = 0;
+                    if($action == 'createdelivery' || $action == 'receivedfromsupplier') {
+                        print '<td class="left">'.$langs->trans("Warehouse").'</td>';
+                    }
 
-				$more = '';
-				$more .= '<div class="tagtable paddingtopbottomonly centpercent noborderspacing savorders_formconfirm" id="savorders_formconfirm">';
-				$more .= '<form method="POST" action="'.$linktogo.'" class="notoptoleftroright">'."\n";
-				$more .= '<input type="hidden" name="action" value="'.$action.'_valid">'."\n";
-				$more .= '<input type="hidden" name="token" value="'.(isset($_SESSION['newtoken']) ? $_SESSION['newtoken'] : '').'">'."\n";
+                    print '</tr>';
 
-				$now = dol_now();
+                    for ($i = 0; $i < $nblines; $i++) {
+                        if (empty($object->lines[$i]->fk_product)) {
+                            continue;
+                        }
 
-				
+                        $objprod = new Product($db);
+                        $objprod->fetch($object->lines[$i]->fk_product);
 
-				$more .= '<table class="valid centpercent">';
-					
-					$more .= '<tr>';
-					$more .= '<td class="left"><b>'.$langs->trans("Product").'</b></td>';
-					$more .= '<td class="left"><b>'.$langs->trans("batch_number").'</b></td>';
-					$more .= '<td class="left"><b>'.$langs->trans("Qty").'</b></td>';
+                        if($objprod->type != Product::TYPE_PRODUCT) continue;
 
-					if($action == 'createdelivery' || $action == 'receivedfromsupplier') {
-						$more .= '<td class="left">'.$langs->trans("Warehouse").'</td>';
-					}
+                        $hasbatch = $objprod->hasbatch();
 
-					$more .= '</tr>';
+                        $tmid = $object->lines[$i]->fk_product;
 
-					for ($i = 0; $i < $nblines; $i++) {
-						if (empty($object->lines[$i]->fk_product)) {
-							continue;
-						}
+                        $warehouse  = $s && isset($s[$tmid]) && isset($s[$tmid]['warehouse']) ? $s[$tmid]['warehouse'] : 0;
+                        $qty        = $s && isset($s[$tmid]) && isset($s[$tmid]['qty']) ? $s[$tmid]['qty'] : $object->lines[$i]->qty;
 
-						$objprod = new Product($db);
-						$objprod->fetch($object->lines[$i]->fk_product);
+                        print '<tr class="oddeven_">';
+                        
+                        // Ref Product
+                        print '<td class="left width300">'.$objprod->getNomUrl(1).'</td>';
 
-						if($objprod->type != Product::TYPE_PRODUCT) continue;
+                        // Batch
+                        print '<td class="left width300">';
+                        if($hasbatch) {
+                            for ($z=0; $z < $qty; $z++) { 
+                                $batch = $s && isset($s[$tmid]) && isset($s[$tmid]['batch'][$z]) ? $s[$tmid]['batch'][$z] : '';
+                                print '<input type="text" class="flat width200" name="savorders_data['.$tmid.'][batch]['.$z.']" value="'.$batch.'"/>';
+                            }
+                        } else {
+                            print '-';
+                        }
+                        print '</td>';
 
-						$hasbatch = $objprod->hasbatch();
+                        $disabled = ($hasbatch) ? 'disabled' : '';
 
+                        $maxqty = ($hasbatch) ? 'max="'.$qty.'"' : '';
 
-						$tmid = $object->lines[$i]->fk_product;
+                        // Qty
+                        print '<td class="left ">';
+                        print '<input type="number" class="flat width50" name="savorders_data['.$tmid.'][qty]" value="'.$qty.'" '.$maxqty.' min="1" step="any" '.$disabled.'/>';
+                        print '</td>';
 
-						$warehouse 	= $s && isset($s[$tmid]) && isset($s[$tmid]['warehouse']) ? $s[$tmid]['warehouse'] : $dware;
-						$batch 		= $s && isset($s[$tmid]) && isset($s[$tmid]['batch']) ? $s[$tmid]['batch'] : '';
-						$qty 		= $s && isset($s[$tmid]) && isset($s[$tmid]['qty']) ? $s[$tmid]['qty'] : $object->lines[$i]->qty;
-						
-						// $qty 	= $hasbatch ? 1 : $qty;
+                        // Warehouse
+                        if($action == 'createdelivery' || $action == 'receivedfromsupplier') {
+                            print '<td class="left selectWarehouses">';
+                            $formproduct = new FormProduct($db);
+                            // Ensure $forcecombo is defined
+                            if (!isset($forcecombo)) {
+                                $forcecombo = 0;  // Default value, adjust if necessary
+                            }
+                            print $formproduct->selectWarehouses($warehouse, 'savorders_data['.$tmid.'][warehouse]', '', 0, 0, 0, '', 0, $forcecombo);
+                            print '</td>';
+                        }
 
-						$more .= '<tr class="oddeven_">';
-						
-						// Ref Product
-						$more .= '<td class="left width300">'.$objprod->getNomUrl(1).'</td>';
+                        print '</tr>';
 
-						// Batch
-						$more .= '<td class="left width300">';
-						if($hasbatch) {
-							for ($z=0; $z < $qty; $z++) { 
-								$batch = $s && isset($s[$tmid]) && isset($s[$tmid]['batch'][$z]) ? $s[$tmid]['batch'][$z] : '';
-								$more .= '<input type="text" class="flat width200" name="savorders_data['.$tmid.'][batch]['.$z.']" value="'.$batch.'"/>';
-							}
-						} else {
-							$more .= '-';
-						}
-						// $more .= '<input type="text" class="flat width200" name="savorders_data['.$tmid.'][batch]" value="'.$batch.'"/>';
-						$more .= '</td>';
+                    }
 
-						// $disabled = ($hasbatch) ? 'disabled' : '';
-						$disabled = '';
+                    print '<tr><td colspan="4"></td></tr>';
+                    print '<tr>';
+                        print '<td colspan="4" class="center">';
+                        print '<div class="savorders_dateaction">';
+                        print '<b>'.$langs->trans('Date').'</b>: ';
+                        print $form->selectDate('', 'savorders_date', 0, 0, 0, '', 1, 1);
+                        print '</div>';
+                        print '</td>';
+                    print '</tr>';
 
-						$maxqty = ($hasbatch) ? 'max="'.$qty.'"' : '';
+                    print '<tr class="valid">';
+                    print '<td class="valid center" colspan="4">';
+                    // Fix: Correctly handle form submission for Validate and Cancel
+                    print '<input type="submit" class="button valignmiddle" name="validate" value="'.$langs->trans("Validate").'">';
+                    print '<input type="submit" class="button button-cancel" name="cancel" value="'.$langs->trans("Cancel").'">';
+                    print '</td>';
+                    print '</tr>'."\n";
 
-						// Qty
-						$more .= '<td class="left ">';
-						$more .= '<input type="number" class="flat width50" name="savorders_data['.$tmid.'][qty]" value="'.$qty.'" '.$maxqty.' min="1" step="any" '.$disabled.'/>';
-						$more .= '</td>';
+                print '</table>';
 
-						// Warehouse
-						if($action == 'createdelivery' || $action == 'receivedfromsupplier') {
-							$more .= '<td class="left selectWarehouses">';
-							$formproduct = new FormProduct($db);
-	                		$more .= $formproduct->selectWarehouses($warehouse, 'savorders_data['.$tmid.'][warehouse]', '', 0, 0, 0, '', 0, $forcecombo);
-							$more .= '</td>';
-						}
+                print "</form>\n";
 
-						$more .= '</tr>';
+                if (!empty($conf->use_javascript_ajax)) {
+                    print '<!-- code to disable button to avoid double clic -->';
+                    print '<script type="text/javascript">'."\n";
+                    print '
+                    $(document).ready(function () {
+                        $(".confirmvalidatebutton").on("click", function() {
+                            console.log("We click on button");
+                            $(this).attr("disabled", "disabled");
+                            setTimeout(\'$(".confirmvalidatebutton").removeAttr("disabled")\', 3000);
+                            $(this).closest("form").submit();
+                        });
+                        $("td.selectWarehouses select").select2();
+                    });
+                    ';
+                    print '</script>'."\n";
+                }
 
-					}
+                print '</div>';
+                print '<br>';
 
-					$more .= '<tr><td colspan="4"></td></tr>';
-					$more .= '<tr>';
-						$more .= '<td colspan="4" class="center">';
-						$more .= '<div class="savorders_dateaction">';
-						$more .= '<b>'.$langs->trans('Date').'</b>: ';
-		                $more .= $form->selectDate('', 'savorders_date', 0, 0, 0, '', 1, 1);
-						$more .= '</div>';
-						$more .= '</td>';
-					$more .= '</tr>';
+                return 1;
+            }
+        }
 
-					$more .= '<tr class="valid">';
-					// // Line with question
-					// $more .= '<td class="valid">'.$question.'</td>';
-					$more .= '<td class="valid center" colspan="4">';
-					// $more .= $form->selectyesno("confirm", $newselectedchoice, 0, false, 0, 0, 'marginleftonly marginrightonly');
-					$more .= '<input class="button valignmiddle confirmvalidatebutton" type="submit" value="'.$langs->trans("Validate").'">';
-					$more .= '<input type="submit" class="button button-cancel" value="'.$langs->trans("Cancel").'" name="cancel" />';
-		        	$more .= '</a>';
-					$more .= '</td>';
-					$more .= '</tr>'."\n";
+        if (in_array('ordercard', explode(':', $parameters['context'])) || in_array('ordersuppliercard', explode(':', $parameters['context']))) {
 
+            if (!$user->rights->savorders->creer || $object->statut < 1) return 0;
 
-				$more .= '</table>';
+            $nblines = count($object->lines);
 
-				$more .= "</form>\n";
+            $savorders_sav = $object->array_options["options_savorders_sav"];
+            $savorders_status = $object->array_options["options_savorders_status"];
 
-				if (!empty($conf->use_javascript_ajax)) {
-					$more .= '<!-- code to disable button to avoid double clic -->';
-					$more .= '<script type="text/javascript">'."\n";
-					$more .= '
-					$(document).ready(function () {
-						$(".confirmvalidatebutton").on("click", function() {
-							console.log("We click on button");
-							$(this).attr("disabled", "disabled");
-							setTimeout(\'$(".confirmvalidatebutton").removeAttr("disabled")\', 3000);
-							//console.log($(this).closest("form"));
-							$(this).closest("form").submit();
-						});
-						$("td.selectWarehouses select").select2();
-					});
-					';
-					$more .= '</script>'."\n";
-				}
+            if($ngtmpdebug) {
+                echo 'nblines : '.$nblines.'<br>';
+                echo 'savorders_sav : '.$savorders_sav.'<br>';
+                echo 'savorders_status : '.$savorders_status.'<br>';
+                echo 'object->element : '.$object->element.'<br>';
+            }
 
-				$more .= '</div>';
-				$more .= '<br>';
+            if($savorders_sav && $nblines > 0) {
 
-				print $more;
+                print '<div class="inline-block divButAction">';
 
-				return 1;
-			}
-		
+                if($object->element == 'order_supplier') {
+                    if(empty($savorders_status)) {
+                        print '<a id="savorders_button" class="savorders butAction badge-status1" href="'.$linktogo.'&action=deliveredtosupplier&token='.newToken().'">' . $langs->trans('ProductDeliveredToSupplier');
+                        print '</a>';
+                    } 
+                    elseif($savorders_status == savorders::DELIVERED_SUPPLIER) {
+                        print '<a id="savorders_button" class="savorders butAction badge-status1" href="'.$linktogo.'&action=receivedfromsupplier&token='.newToken().'">' . $langs->trans('ProductReceivedFromSupplier');
+                        print '</a>';
+                    }
+                } else {
+                    if(empty($savorders_status)) {
+                        print '<a id="savorders_button" class="savorders butAction badge-status1" href="'.$linktogo.'&action=receiptofproduct&token='.newToken().'">' . $langs->trans('ProductReceivedFromCustomer');
+                        print '</a>';
+                    } 
+                    elseif($savorders_status == savorders::RECIEVED_CUSTOMER) {
+                        print '<a id="savorders_button" class="savorders butAction badge-status1" href="'.$linktogo.'&action=createdelivery&token='.newToken().'">' . $langs->trans('ProductDeliveredToCustomer');
+                        print '</a>';
+                    }
+                }
 
-	        if (!$user->rights->savorders->creer || $object->statut < 1) return 0;
+                print '</div>';
 
-	        $nblines = count($object->lines);
-
-	        $savorders_sav = $object->array_options["options_savorders_sav"];
-	        $savorders_status = $object->array_options["options_savorders_status"];
-
-	        if($ngtmpdebug) {
-		        echo 'nblines : '.$nblines.'<br>';
-		        echo 'savorders_sav : '.$savorders_sav.'<br>';
-		        echo 'savorders_status : '.$savorders_status.'<br>';
-		        echo 'object->element : '.$object->element.'<br>';
-	        }
-
-	        if($savorders_sav && $nblines > 0) {
-
-	            print '<div class="inline-block divButAction">';
-
-	        	if($object->element == 'order_supplier') {
-	        		if(empty($savorders_status)) {
-		        		print '<a id="savorders_button" class="savorders butAction badge-status1" href="'.$linktogo.'&action=deliveredtosupplier">' . $langs->trans('ProductDeliveredToSupplier');
-			        	print '</a>';
-		        	} 
-		        	elseif($savorders_status == savorders::DELIVERED_SUPPLIER) {
-			        	print '<a id="savorders_button" class="savorders butAction badge-status1" href="'.$linktogo.'&action=receivedfromsupplier">' . $langs->trans('ProductReceivedFromSupplier');
-			        	print '</a>';
-		        	}
-	        	} else {
-		        	if(empty($savorders_status)) {
-		        		print '<a id="savorders_button" class="savorders butAction badge-status1" href="'.$linktogo.'&action=receiptofproduct">' . $langs->trans('ProductReceivedFromCustomer');
-			        	print '</a>';
-		        	} 
-		        	elseif($savorders_status == savorders::RECIEVED_CUSTOMER) {
-			        	print '<a id="savorders_button" class="savorders butAction badge-status1" href="'.$linktogo.'&action=createdelivery">' . $langs->trans('ProductDeliveredToCustomer');
-			        	print '</a>';
-		        	}
-	        	}
-
-	            print '</div>';
-
-	        }
+            }
 
         }
 

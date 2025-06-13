@@ -18,3 +18,6 @@ savorders_history=SAV History
 
 OrderSavRecieveProduct=SAV receipt on product
 OrderSavDeliveryProduct=SAV return on product
+BatchNotInStock=Batch number %s is not available in stock for the selected warehouse
+ErrorCheckingBatchStock=Error occurred while checking stock for batch number %s
+InsufficientBatchStock=Insufficient stock for batch number %s. Available: %s

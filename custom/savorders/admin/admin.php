@@ -81,7 +81,9 @@ print '<form id="col4-form" method="post" action="admin.php" enctype="multipart/
             print '<td>';
                 $idwarehouse = isset($conf->global->SAVORDERS_ADMIN_IDWAREHOUSE) ? $conf->global->SAVORDERS_ADMIN_IDWAREHOUSE : 0;
                 $formproduct = new FormProduct($db);
-                print $formproduct->selectWarehouses(GETPOST('idwarehouse', 'int') ? GETPOST('idwarehouse', 'int') : $idwarehouse, 'idwarehouse', '', 1, 0, 0, '', 0, $forcecombo);
+$forcecombo = 0; // or 1, depending on what you need
+         
+		 print $formproduct->selectWarehouses(GETPOST('idwarehouse', 'int') ? GETPOST('idwarehouse', 'int') : $idwarehouse, 'idwarehouse', '', 1, 0, 0, '', 0, $forcecombo);
             print '</td>';
         print '</tr>';
 
