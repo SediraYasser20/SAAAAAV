@@ -336,12 +336,67 @@ if ($action == 'create') {
 	print '<input type="hidden" name="action" value="add">';
 	print '<input type="hidden" name="backtopage" value="'.$backtopage.'">';
 
+	$is_in_restricted_group = false;
+	if (!$user->admin) { // No need to check for admins
+		$sql_check_group = "SELECT COUNT(*) as count FROM ".MAIN_DB_PREFIX."usergroup_user WHERE fk_user = ".$user->id." AND fk_usergroup = 1";
+		$resql_check_group = $db->query($sql_check_group);
+		if ($resql_check_group) {
+			$obj_check_group = $db->fetch_object($resql_check_group);
+			if ($obj_check_group && $obj_check_group->count > 0) {
+				$is_in_restricted_group = true;
+			}
+		} else {
+			// Optional: Log error if query fails
+			dol_syslog("Error checking user group membership: ".$db->lasterror(), LOG_ERR);
+		}
+	}
+	// For debugging, you can add: error_log("User ID: ".$user->id." Is in restricted group: ".($is_in_restricted_group ? 'Yes' : 'No'));
+
 	print dol_get_fiche_head(array(), '');
 
 	print '<table class="border centpercent tableforfieldcreate">'."\n";
 
+	if ($is_in_restricted_group) {
+		// Fetch product 31's label to display
+		$restricted_product_id = 31;
+		$restricted_product_label = '';
+		require_once DOL_DOCUMENT_ROOT.'/product/class/product.class.php';
+		$tmp_prod = new Product($db);
+		if ($tmp_prod->fetch($restricted_product_id) > 0) {
+			$restricted_product_label = $tmp_prod->getNomUrl(1); // Get ref and link
+		} else {
+			$restricted_product_label = 'Product ID 31 (Error fetching label)';
+		}
+
+		// Manually print the row for fk_product
+		$product_field_label = isset($object->fields['fk_product']['label']) ? $langs->trans($object->fields['fk_product']['label']) : $langs->trans('Product');
+
+		print '<tr class="field_fk_product">';
+		print '<td class="titlefieldcreate fieldrequired">';
+		print $product_field_label;
+		print '</td>';
+		print '<td class="valuefieldcreate">';
+		if (!empty($object->fields['fk_product']['picto'])) {
+			 print img_picto('', $object->fields['fk_product']['picto'], '', 0, 0, 0, '', 'pictofixedwidth');
+		}
+		print $restricted_product_label; // Display product name/link
+		print '<input type="hidden" name="fk_product" value="' . $restricted_product_id . '">';
+		print '</td>';
+		print '</tr>';
+
+		// Unset or mark fk_product so commonfields_add.tpl.php doesn't render it
+		if (isset($object->fields['fk_product'])) {
+			$original_fk_product_field_settings = $object->fields['fk_product']; // Save original settings
+			$object->fields['fk_product']['visible'] = 0; // This should prevent it from being rendered by the loop
+		}
+	}
+
 	// Common attributes
 	include DOL_DOCUMENT_ROOT.'/core/tpl/commonfields_add.tpl.php';
+
+	if ($is_in_restricted_group && isset($original_fk_product_field_settings)) {
+		$object->fields['fk_product'] = $original_fk_product_field_settings; // Restore for any subsequent logic if object is reused.
+	}
 
 	// Other attributes
 	include DOL_DOCUMENT_ROOT.'/core/tpl/extrafields_add.tpl.php';

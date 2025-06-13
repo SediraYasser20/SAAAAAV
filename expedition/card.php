@@ -38,6 +38,33 @@
 
 // Load Dolibarr environment
 require '../main.inc.php';
+
+if (!function_exists('getBaseSerialNumberPart')) {
+    /**
+     * Extracts the base part of a serial number or MO reference string.
+     * The base part is defined as the substring before the third hyphen,
+     * or the whole string if fewer than three hyphens exist.
+     *
+     * @param string \$serial_string The input serial number or MO reference.
+     * @return string The base part of the string.
+     */
+    function getBaseSerialNumberPart($serial_string) {
+        $hyphen_count = 0;
+        $cut_off_position = strlen($serial_string); // Default to full string
+
+        for ($i = 0; $i < strlen($serial_string); $i++) {
+            if ($serial_string[$i] == '-') {
+                $hyphen_count++;
+                if ($hyphen_count == 3) {
+                    $cut_off_position = $i;
+                    break;
+                }
+            }
+        }
+        return substr($serial_string, 0, $cut_off_position);
+    }
+}
+
 require_once DOL_DOCUMENT_ROOT.'/core/class/html.formfile.class.php';
 require_once DOL_DOCUMENT_ROOT.'/expedition/class/expedition.class.php';
 require_once DOL_DOCUMENT_ROOT.'/product/class/html.formproduct.class.php';
@@ -330,7 +357,7 @@ if ($action == 'add' && $permissiontoadd) {
             // FIXED: Correct MO detection syntax
             $is_mo_line = false;
             if (empty($current_order_line->fk_product)) {
-                $is_mo_line = (strpos($current_order_line->description, 'MO') !== false) && 
+                $is_mo_line = (strpos($current_order_line->description, 'Costum-PC') === 0) && 
                               (strpos($current_order_line->description, '(Fabrication)') !== false);
             }
 
@@ -380,9 +407,75 @@ if ($action == 'add' && $permissiontoadd) {
                                     $error++; break 2; 
                                 }
                                 $product_batch_used_for_serial_check[] = $serial_key;
+
+                                // Custom validation for Product 31 linked to an MO
+                                // $is_mo_line is determined before this loop, based on $current_order_line->fk_product being empty and description matching.
+                                // $current_order_line is $objectsrc->lines[$i]
+                                // $effective_fk_product_for_line is 31 if $is_mo_line is true.
+                                if ($is_mo_line && $effective_fk_product_for_line == 31) {
+                                    $mo_ref_from_db = '';
+                                    // Fetch the MO reference using fk_mrp_mo from the order line
+                                    if (!empty($current_order_line->fk_mrp_mo)) {
+                                        $sql_mo_ref = "SELECT ref FROM ".MAIN_DB_PREFIX."mrp_mo WHERE rowid = ".((int) $current_order_line->fk_mrp_mo);
+                                        $resql_mo_ref = $db->query($sql_mo_ref);
+                                        if ($resql_mo_ref) {
+                                            if ($db->num_rows($resql_mo_ref) > 0) {
+                                                $obj_mo_ref = $db->fetch_object($resql_mo_ref);
+                                                $mo_ref_from_db = $obj_mo_ref->ref;
+                                            } else {
+                                                setEventMessages($langs->trans("ErrorMORecordNotFoundForFK", $current_order_line->fk_mrp_mo), null, 'errors');
+                                                $error++; break 2;
+                                            }
+                                        } else {
+                                            setEventMessages($langs->trans("ErrorFailedToFetchMORefDB", $db->lasterror()), null, 'errors');
+                                            $error++; break 2;
+                                        }
+                                    } else {
+                                        // Fallback: Try to parse from description if fk_mrp_mo is not set
+                                        // This part assumes $current_order_line->description is the original description of the MO line
+                                        if (preg_match('/^(Costum-PC\S+)/', trim($current_order_line->description), $matches_desc_mo)) {
+                                            $mo_ref_from_db = $matches_desc_mo[1];
+                                        } else {
+                                            // If fk_mrp_mo is not set and description doesn't match, it's an error for Product 31 MO lines.
+                                            setEventMessages($langs->trans("ErrorMORefLinkOrDescMissing", $current_order_line->id), null, 'errors');
+                                            $error++; break 2;
+                                        }
+                                    }
+
+                                    $productbatch_entry = new Productbatch($db);
+                                    // $batch_id_val is the rowid from llx_product_batch table
+                                    if ($batch_id_val > 0 && $productbatch_entry->fetch($batch_id_val) > 0) {
+                                        $entered_serial = $productbatch_entry->batch; // This is the actual serial string
+
+                                        // New validation using getBaseSerialNumberPart
+                                        $base_mo_ref = getBaseSerialNumberPart($mo_ref_from_db);
+                                        $base_entered_serial = getBaseSerialNumberPart($entered_serial);
+
+                                        if ($base_mo_ref !== $base_entered_serial) {
+                                            setEventMessages($langs->trans("ErrorSerialBaseDoesNotMatchMOBase", $entered_serial, $mo_ref_from_db), null, 'errors');
+                                            $error++; break 2;
+                                        } else {
+                                            // Base parts match. Now, additionally check the suffix for serials that are expected to have one.
+                                            if (strlen($entered_serial) > strlen($base_entered_serial)) {
+                                                $suffix_part = substr($entered_serial, strlen($base_entered_serial));
+                                                // Suffix must be like "-1", "-23", etc. (a hyphen followed by a positive integer)
+                                                // preg_match('/^-([1-9]\d*)$/', $suffix_part, $matches_suffix)
+                                                // Ensure $matches_suffix[1] is a positive integer. Simply is_numeric is not enough (e.g. -0, -007)
+                                                if (!preg_match('/^-([1-9]\d*)$/', $suffix_part)) {
+                                                    setEventMessages($langs->trans("ErrorSerialSuffixInvalidFormat", $entered_serial, $base_entered_serial), null, 'errors');
+                                                    $error++; break 2;
+                                                }
+                                            }
+                                            // If strlen($entered_serial) == strlen($base_entered_serial), an exact match of bases is accepted.
+                                        }
+                                    } else {
+                                        setEventMessages($langs->trans("ErrorFailedToFetchBatchDetailsForID", $batch_id_val), null, 'errors');
+                                        $error++; break 2;
+                                    }
+                                }
                             }
                             $sub_qty_details[$k]['q'] = $qty_val;
-                            $sub_qty_details[$k]['id_batch'] = $batch_id_val;
+                            $sub_qty_details[$k]['id_batch'] = $batch_id_val; // This is llx_product_batch.rowid
                             $subtotal_qty_for_line += $qty_val;
                         }
                         $k++;
@@ -453,7 +546,7 @@ if ($action == 'add' && $permissiontoadd) {
                 // Determine the correct product ID for this line
                 $is_mo_line_for_add = false;
                 if (empty($current_order_line_for_add->fk_product)) {
-                    $is_mo_line_for_add = (strpos($current_order_line_for_add->description, 'MO') !== false) && 
+                    $is_mo_line_for_add = (strpos($current_order_line_for_add->description, 'Costum-PC') === 0) && 
                                          (strpos($current_order_line_for_add->description, '(Fabrication)') !== false);
                 }
                 $fk_product_for_add = $is_mo_line_for_add ? 31 : $current_order_line_for_add->fk_product;
@@ -532,7 +625,7 @@ if ($action == 'add' && $permissiontoadd) {
                     if ($corresponding_order_line_final) {
                         $is_mo_line_final = false;
                         if (empty($corresponding_order_line_final->fk_product)) {
-                            $is_mo_line_final = (strpos($corresponding_order_line_final->description, 'MO') !== false) && 
+                            $is_mo_line_final = (strpos($corresponding_order_line_final->description, 'Costum-PC') === 0) && 
                                                (strpos($corresponding_order_line_final->description, '(Fabrication)') !== false);
                         }
                         if ($is_mo_line_final) {
@@ -1313,7 +1406,7 @@ if ($origin == 'commande' && isset($object->id) && $object->id > 0 && !empty($ob
         // $orderLineDataInMemory is a snapshot. We fetch the actual line for update to avoid issues with partial objects.
         $is_mo_line_for_update = false;
         if (empty($orderLineDataInMemory->fk_product) && isset($orderLineDataInMemory->description) &&
-            strpos($orderLineDataInMemory->description, 'MO') === 0 &&  // Check starts with MO
+            strpos($orderLineDataInMemory->description, 'Costum-PC') === 0 &&  // Check starts with Costum-PC
             strpos($orderLineDataInMemory->description, '(Fabrication)') !== false) { // Check contains (Fabrication)
             $is_mo_line_for_update = true;
         }
@@ -1444,8 +1537,40 @@ if ($origin == 'commande' && isset($object->id) && $object->id > 0 && !empty($ob
 				$line = $object->lines[$indiceAsked]; // This is the Sales Order line
 
                 // Store original line properties for potential use, especially if MO line's fk_product was just updated.
-                // These are from the original $line object before it might be re-interpreted as Product 31.
                 $original_line_description = $line->description;
+                $original_line_fk_product_type = $line->product_type;
+                $original_line_label = $line->label;
+
+                // Consolidated MO line identification, MO ref extraction, and product ID determination for display/logic
+                $is_mo_line = false;
+                $target_mo_serial_ref = null;
+                // Start with the actual fk_product from the line. This will be overridden to 31 if it's an MO line.
+                $fk_product_to_use_for_display = $line->fk_product;
+
+                if (isset($line->description) &&
+                    strpos($line->description, 'Costum-PC') === 0 &&
+                    strpos($line->description, '(Fabrication)') !== false) {
+
+                    $is_mo_line = true;
+                    // If it IS an MO line, then fk_product_to_use_for_display should be 31.
+                    // The actual Product 31 object will be fetched later when $product->fetch($fk_product_to_use_for_display) is called.
+                    $fk_product_to_use_for_display = 31;
+
+                    if (preg_match('/^(Costum-PC\S+)/', trim($line->description), $matches)) {
+                        $target_mo_serial_ref = $matches[1];
+                    } else {
+                        dol_syslog("expedition/card.php (Display Loop): MO Line identified for Order Line ID: " . $line->id . ". Could not extract MO ref from description: '" . $line->description . "'. Expected pattern like 'Costum-PCxxxx-xxxx ...'.", LOG_WARNING);
+                    }
+                }
+                // else: Not an MO line based on description, $fk_product_to_use_for_display remains $line->fk_product (original value)
+
+                // Calculate base_mo_ref_for_line for the current order line
+                $base_mo_ref_for_line = '';
+                if ($is_mo_line && $fk_product_to_use_for_display == 31 && isset($target_mo_serial_ref) && $target_mo_serial_ref !== null) {
+                    if (function_exists('getBaseSerialNumberPart')) {
+                        $base_mo_ref_for_line = getBaseSerialNumberPart($target_mo_serial_ref);
+                    }
+                }
                 $original_line_fk_product_type = $line->product_type; // Use $line->product_type if available from fetch_lines()
                 $original_line_label = $line->label;
 
@@ -1456,31 +1581,29 @@ if ($origin == 'commande' && isset($object->id) && $object->id > 0 && !empty($ob
                 // Identify MO line based *solely* on description pattern now,
                 // as fk_product would have been updated to 31 for MO lines in the preceding step (before this loop).
                 if (isset($line->description) && 
-                    strpos($line->description, 'MO') === 0 &&  // Check if description starts with "MO"
+                    strpos($line->description, 'Costum-PC') === 0 &&  // Check if description starts with "Costum-PC"
                     strpos($line->description, '(Fabrication)') !== false) { // Check if description contains "(Fabrication)"
                     
                     $is_mo_line = true; // This line is identified as an MO line
                     
                     // If it's an MO line, try to extract the MO reference (serial number) from its description
-                    if (preg_match('/^(MO\S+)/', trim($line->description), $matches)) {
+                    if (preg_match('/^(Costum-PC\S+)/', trim($line->description), $matches)) {
                         $target_mo_serial_ref = $matches[1];
-                        // Optional: Log successful extraction for debugging
-                        // dol_syslog("expedition/card.php (Display Loop): MO Line identified for Order Line ID: " . $line->id . ". Description: '" . $line->description . "'. Extracted MO Ref (Serial): '" . $target_mo_serial_ref . "'.", LOG_DEBUG);
                     } else {
-                        // Log if MO line description does not match expected pattern for MO ref extraction
-                        dol_syslog("expedition/card.php (Display Loop): MO Line identified for Order Line ID: " . $line->id . ". Could not extract MO ref from description: '" . $line->description . "'. Expected pattern like 'MOxxxx-xxxx ...'.", LOG_WARNING);
+                        dol_syslog("expedition/card.php (Display Loop): MO Line identified for Order Line ID: " . $line->id . ". Could not extract MO ref from description: '" . $line->description . "'. Expected pattern like 'Costum-PCxxxx-xxxx ...'.", LOG_WARNING);
                     }
-                } else {
-                    // This is not an MO line (based on description pattern)
-                    // $is_mo_line remains false, $target_mo_serial_ref remains null
                 }
 
-                // The variable $is_mo_line is now set for the current line.
-                // The variable $target_mo_serial_ref is set if it's an MO line and ref was extractable.
-                // These will be used by the serial number disabling logic further down in this loop.
-
                 // Determine the product to use for display.
-                // If it's an MO line, fk_product should be 31 (set in previous step).
+                $fk_product_to_use_for_display = $line->fk_product;
+
+                // Calculate base_mo_ref_for_line for the current order line
+                $base_mo_ref_for_line = ''; // Ensure it's reset for each $line
+                if ($is_mo_line && $fk_product_to_use_for_display == 31 && !empty($target_mo_serial_ref)) { // Check !empty for $target_mo_serial_ref
+                    if (function_exists('getBaseSerialNumberPart')) {
+                        $base_mo_ref_for_line = getBaseSerialNumberPart($target_mo_serial_ref);
+                    }
+                }
                 // If not, it's the original fk_product.
                 $fk_product_to_use_for_display = $line->fk_product;
                 // $mo_product_id_override = 31; // This is already implicitly handled if $line->fk_product is 31
@@ -1762,11 +1885,16 @@ if ($origin == 'commande' && isset($object->id) && $object->id > 0 && !empty($ob
 
 									print '<!-- subj='.$subj.'/'.$nbofsuggested.' --><tr '.((($subj + 1) == $nbofsuggested) ? 'oddeven' : '').'>';
 									print '<td colspan="3" ></td><td class="center">';
-									$disabled_attr = '';
-if ($is_mo_line && isset($target_mo_serial_ref) && $target_mo_serial_ref !== null && $target_mo_serial_ref != $dbatch->batch) {
-    $disabled_attr = ' disabled="disabled"';
-}
-print '<input class="qtyl '.$tooltipClass.' right" title="'.$tooltipTitle.'" name="qtyl'.$indiceAsked.'_'.$subj.'" id="qtyl'.$indiceAsked.'_'.$subj.'" type="text" size="4" value="'.$deliverableQty.'"'.$disabled_attr.'>';
+
+									$current_full_serial_for_attr = $dbatch->batch;
+									$data_attrs_for_qty_input = ' data-serial="'.dol_escape_htmltag($current_full_serial_for_attr).'"';
+									// $base_mo_ref_for_line was calculated for the parent order line ($line)
+									// $fk_product_to_use_for_display is also for the parent order line
+									if ($is_mo_line && $fk_product_to_use_for_display == 31 && !empty($base_mo_ref_for_line)) {
+										$data_attrs_for_qty_input .= ' data-basemoref="'.dol_escape_htmltag($base_mo_ref_for_line).'"';
+									}
+// PHP $disabled_attr is removed from the input tag. JS will handle enabling/disabling.
+print '<input class="qtyl mo-serial-qty-input '.$tooltipClass.' right" title="'.$tooltipTitle.'" name="qtyl'.$indiceAsked.'_'.$subj.'" id="qtyl'.$indiceAsked.'_'.$subj.'" type="text" size="4" value="'.$deliverableQty.'"'.$data_attrs_for_qty_input.'>';
 									print '</td>';
 
 									print '<!-- Show details of lot -->';
@@ -1774,10 +1902,34 @@ print '<input class="qtyl '.$tooltipClass.' right" title="'.$tooltipTitle.'" nam
 
 									print $staticwarehouse->getNomUrl(0).' / ';
 
-									print '<input name="batchl'.$indiceAsked.'_'.$subj.'" type="hidden" value="'.$dbatch->id.'">';
+									// Prepare MO filter for selectLotStock if applicable
+									$mo_filter_for_selectlotstock_card = null;
+									$base_mo_ref_for_js_attr = '';
+									$select_html_name = 'batchl'.$indiceAsked.'_'.$subj;
+									$select_more_css = 'minwidth150';
+
+									if ($is_mo_line && $fk_product_to_use_for_display == 31 && isset($target_mo_serial_ref) && $target_mo_serial_ref !== null) {
+										$mo_filter_for_selectlotstock_card = $target_mo_serial_ref;
+										if (function_exists('getBaseSerialNumberPart')) {
+											$base_mo_ref_for_js_attr = getBaseSerialNumberPart($target_mo_serial_ref);
+										}
+										$select_more_css .= ' mo-product31-serial-select'; // Add class
+									}
+
+									if (getDolGlobalString('CONFIG_MAIN_FORCELISTOFBATCHISCOMBOBOX')) {
+										// Parameters for selectLotStock: $selected, $htmlname, $filterstatus, $empty, $disabled, $fk_product, $fk_entrepot, $objectLines, $empty_label, $forcecombo, $events, $morecss, $mo_ref_filter
+										print $formproduct->selectLotStock($dbatch->id, $select_html_name, '', 1, 0, $fk_product_to_use_for_display, $warehouse_id, array(), '', 1, array(), $select_more_css, $mo_filter_for_selectlotstock_card);
+										if (!empty($base_mo_ref_for_js_attr)) {
+											print '<script type="text/javascript">$(document).ready(function() { $("#'.$select_html_name.'").attr("data-basemoref", "'.dol_escape_js($base_mo_ref_for_js_attr).'"); });</script>';
+										}
+									} else {
+										print '<input name="'.$select_html_name.'" type="hidden" value="'.$dbatch->id.'">';
+										// Display the batch number textually. If it's an MO line for Product 31, this text is just for info, selection happens if forcecombo is on.
+										print $dbatch->batch;
+									}
 
 									$detail = '';
-									$detail .= $langs->trans("Batch").': '.$dbatch->batch;
+									// $detail .= $langs->trans("Batch").': '.$dbatch->batch; // Batch already shown or part of select
 									if (!getDolGlobalString('PRODUCT_DISABLE_SELLBY') && !empty($dbatch->sellby)) {
 										$detail .= ' - '.$langs->trans("SellByDate").': '.dol_print_date($dbatch->sellby, "day");
 									}
@@ -2017,29 +2169,67 @@ print '<input class="qtyl '.$tooltipClass.' right" title="'.$tooltipTitle.'" nam
 										$alreadyQtyBatchSetted[$fk_product_to_use_for_display][$dbatch->batch][intval($warehouse_id)] = $deliverableQty + $alreadyQtyBatchSetted[$fk_product_to_use_for_display][$dbatch->batch][intval($warehouse_id)];
 
 										print '<!-- subj='.$subj.'/'.$nbofsuggested.' --><tr '.((($subj + 1) == $nbofsuggested) ? 'oddeven' : '').'><td colspan="3"></td><td class="center">';
-										$disabled_attr = '';
-if ($is_mo_line && isset($target_mo_serial_ref) && $target_mo_serial_ref !== null && $target_mo_serial_ref != $dbatch->batch) {
-    $disabled_attr = ' disabled="disabled"';
-}
-print '<input class="qtyl right '.$tooltipClass.'" title="'.$tooltipTitle.'" name="'.$inputName.'" id="'.$inputName.'" type="text" size="4" value="'.$deliverableQty.'"'.$disabled_attr.'>';
+
+										$current_full_serial_for_attr_multiwh = $dbatch->batch;
+										$data_attrs_for_qty_input_multiwh = ' data-serial="'.dol_escape_htmltag($current_full_serial_for_attr_multiwh).'"';
+										// $base_mo_ref_for_line was calculated for the parent order line ($line)
+										// $fk_product_to_use_for_display is also for the parent order line
+										if ($is_mo_line && $fk_product_to_use_for_display == 31 && !empty($base_mo_ref_for_line)) {
+											$data_attrs_for_qty_input_multiwh .= ' data-basemoref="'.dol_escape_htmltag($base_mo_ref_for_line).'"';
+										}
+// PHP $disabled_attr is removed from the input tag. JS will handle enabling/disabling.
+print '<input class="qtyl mo-serial-qty-input right '.$tooltipClass.'" title="'.$tooltipTitle.'" name="'.$inputName.'" id="'.$inputName.'" type="text" size="4" value="'.$deliverableQty.'"'.$data_attrs_for_qty_input_multiwh.'>';
 										print '</td>';
 
 										print '<td class="left">';
 
 										print $tmpwarehouseObject->getNomUrl(0).' / ';
 
-										print '<!-- Show details of lot -->';
-										print '<input name="batchl'.$indiceAsked.'_'.$subj.'" type="hidden" value="'.$dbatch->id.'">';
+										// Prepare MO filter for selectLotStock if applicable
+										$mo_filter_for_selectlotstock_card = null;
+										$base_mo_ref_for_js_attr = '';
+										$select_html_name_multiwh = 'batchl'.$indiceAsked.'_'.$subj; // Ensure unique htmlname if needed, though $subj should make it unique in this loop iteration
+										$select_more_css_multiwh = 'minwidth150';
+
+										if ($is_mo_line && $fk_product_to_use_for_display == 31 && isset($target_mo_serial_ref) && $target_mo_serial_ref !== null) {
+											$mo_filter_for_selectlotstock_card = $target_mo_serial_ref;
+											if (function_exists('getBaseSerialNumberPart')) {
+												$base_mo_ref_for_js_attr = getBaseSerialNumberPart($target_mo_serial_ref);
+											}
+											$select_more_css_multiwh .= ' mo-product31-serial-select'; // Add class
+										}
+
+										if (getDolGlobalString('CONFIG_MAIN_FORCELISTOFBATCHISCOMBOBOX')) {
+											// Parameters for selectLotStock: $selected, $htmlname, $filterstatus, $empty, $disabled, $fk_product, $fk_entrepot, $objectLines, $empty_label, $forcecombo, $events, $morecss, $mo_ref_filter
+											print $formproduct->selectLotStock($dbatch->id, $select_html_name_multiwh, '', 1, 0, $fk_product_to_use_for_display, $warehouse_id, array(), '', 1, array(), $select_more_css_multiwh, $mo_filter_for_selectlotstock_card);
+											if (!empty($base_mo_ref_for_js_attr)) {
+												print '<script type="text/javascript">$(document).ready(function() { $("#'.$select_html_name_multiwh.'").attr("data-basemoref", "'.dol_escape_js($base_mo_ref_for_js_attr).'"); });</script>';
+											}
+										} else {
+											print '<!-- Show details of lot -->';
+											print '<input name="'.$select_html_name_multiwh.'" type="hidden" value="'.$dbatch->id.'">';
+											// Display the batch number textually. If it's an MO line for Product 31, this text is just for info, selection happens if forcecombo is on.
+											// print $dbatch->batch; // This line is removed as requested by implication of using selectLotStock or ensuring the value comes from what is selected.
+											// The actual display of the batch number if not using forcecombo will be handled by iterating $dbatch->batch,
+											// but the selectLotStock (if used) or selectLotDataList (implicitly using filtered loadLotStock) handles available options.
+											// For non-forcecombo, we still want to show the batch name.
+											$resultFetchBatch = $productlotObject->fetch($dbatch->id); // $dbatch->id is fk_product_batch
+											if ($resultFetchBatch > 0) {
+												print $productlotObject->getNomUrl(1);
+											} else {
+												print $dbatch->batch; // Fallback to raw batch name
+											}
+										}
 
 										//print '|'.$line->fk_product.'|'.$dbatch->batch.'|<br>';
                                         // $fk_product_to_use_for_display is Prod 31 ID for MO
-										print $langs->trans("Batch").': ';
-										$result = $productlotObject->fetch(0, $fk_product_to_use_for_display, $dbatch->batch);
-										if ($result > 0) {
-											print $productlotObject->getNomUrl(1);
-										} else {
-											print $langs->trans("TableLotIncompleteRunRepairWithParamStandardEqualConfirmed");
-										}
+										// print $langs->trans("Batch").': '; // Batch already shown or part of select
+										// $result = $productlotObject->fetch(0, $fk_product_to_use_for_display, $dbatch->batch); // This was incorrect, should fetch by $dbatch->id
+										// if ($result > 0) {
+										// 	print $productlotObject->getNomUrl(1);
+										// } else {
+										// 	print $langs->trans("TableLotIncompleteRunRepairWithParamStandardEqualConfirmed");
+										// }
 										if (!getDolGlobalString('PRODUCT_DISABLE_SELLBY') && !empty($dbatch->sellby)) {
 											print ' - '.$langs->trans("SellByDate").': '.dol_print_date($dbatch->sellby, "day");
 										}
@@ -3204,5 +3394,147 @@ print '<input class="qtyl right '.$tooltipClass.'" title="'.$tooltipTitle.'" nam
 }
 
 // End of page
+?>
+<script type="text/javascript">
+//Place this inside a <script> tag in expedition/card.php
+if (typeof window.getBaseSerialNumberPart !== 'function') {
+    /**
+     * Extracts the base part of a serial number or MO reference string (JavaScript version).
+     * The base part is defined as the substring before the third hyphen,
+     * or the whole string if fewer than three hyphens exist.
+     *
+     * @param {string} serial_string The input serial number or MO reference.
+     * @return {string} The base part of the string.
+     */
+    window.getBaseSerialNumberPart = function(serial_string) {
+        if (typeof serial_string !== 'string') {
+            return '';
+        }
+        let hyphen_count = 0;
+        let cut_off_position = serial_string.length; // Default to full string
+
+        for (let i = 0; i < serial_string.length; i++) {
+            if (serial_string[i] === '-') {
+                hyphen_count++;
+                if (hyphen_count === 3) {
+                    cut_off_position = i;
+                    break;
+                }
+            }
+        }
+        return serial_string.substring(0, cut_off_position);
+    };
+}
+
+// Ensure this runs after the DOM is ready and getBaseSerialNumberPart is defined.
+$(document).ready(function() {
+    if (typeof window.getBaseSerialNumberPart !== 'function') {
+        console.error('getBaseSerialNumberPart function is not defined. Serial filtering might not work.');
+        return;
+    }
+
+    // Select all dropdowns that are meant for MO Product 31 serials.
+    $('select.mo-product31-serial-select').each(function() {
+        var $selectField = $(this);
+        var baseMoRef = $selectField.data('basemoref');
+
+        if (!baseMoRef) {
+            return; // Skip this select field if no base MO ref is defined for it.
+        }
+
+        var hasAtLeastOneEnabledOption = false;
+
+        $selectField.find('option').each(function() {
+            var $option = $(this);
+            var serialValue = $option.val();
+            var serialText = $option.text();
+
+            if (serialValue === '' || serialValue === '0' || serialValue === '-1') {
+                return;
+            }
+
+            var actualSerial = '';
+            var match = serialText.match(/^([^\s(]+)/);
+            if (match && match[1]) {
+                actualSerial = match[1];
+            }
+
+            if (actualSerial === '') {
+                return;
+            }
+
+            var baseSerialPart = window.getBaseSerialNumberPart(actualSerial);
+
+            if (baseSerialPart === baseMoRef) {
+                // Base parts match. Now check suffix if the serial is longer than its base.
+                if (actualSerial.length > baseSerialPart.length) {
+                    var suffix_part = actualSerial.substring(baseSerialPart.length);
+                    // Suffix must be like "-1", "-23", etc. (hyphen followed by positive integer)
+                    if (/^-([1-9][0-9]*)$/.test(suffix_part)) {
+                        $option.prop('disabled', false);
+                        hasAtLeastOneEnabledOption = true;
+                    } else {
+                        // Base matches, but suffix is present and invalidly formatted
+                        $option.prop('disabled', true);
+                    }
+                } else {
+                    // No suffix, and base parts match (exact match to MO ref, e.g. for qty 1 MO)
+                    $option.prop('disabled', false);
+                    hasAtLeastOneEnabledOption = true;
+                }
+            } else {
+                $option.prop('disabled', true);
+            }
+        });
+    });
+
+    // Iterate over each quantity input field that's part of the serial number selection process for MOs
+    $('input.mo-serial-qty-input').each(function() {
+        var $qtyInput = $(this);
+        var fullSerial = $qtyInput.data('serial');
+        var baseMoRef = $qtyInput.data('basemoref'); // Base MO ref for the parent order line
+
+        if (typeof baseMoRef === 'string' && baseMoRef !== '') { // This serial is part of a Product 31 MO line
+            if (typeof fullSerial !== 'string' || fullSerial === '') {
+                // Should not happen if data-serial is always set, but good to check
+                $qtyInput.prop('disabled', true);
+                $qtyInput.val(''); // Clear value
+                return; // Next input field
+            }
+
+            var baseSerialPart = window.getBaseSerialNumberPart(fullSerial);
+            var isValid = false;
+
+            if (baseSerialPart === baseMoRef) {
+                // Base parts match. Now check suffix if the serial is longer than its base.
+                if (fullSerial.length > baseSerialPart.length) {
+                    var suffixPart = fullSerial.substring(baseSerialPart.length);
+                    // Suffix must be like "-1", "-23", etc. (hyphen followed by positive integer)
+                    if (/^-([1-9][0-9]*)$/.test(suffixPart)) {
+                        isValid = true; // Valid: Base matches and suffix is valid numeric
+                    }
+                    // else: isValid remains false, suffix is present but invalid
+                } else {
+                    // No suffix, and base parts match (exact match to MO ref, e.g. for qty 1 MOs, or MO-REF itself)
+                    isValid = true;
+                }
+            }
+            // else: baseSerialPart !== baseMoRef, so isValid remains false
+
+            if (isValid) {
+                $qtyInput.prop('disabled', false);
+            } else {
+                $qtyInput.prop('disabled', true);
+                $qtyInput.val(''); // Clear value for disabled inputs
+            }
+
+        } else {
+            // Not an MO-linked Product 31 serial (no data-basemoref), so ensure it's enabled (standard behavior)
+            $qtyInput.prop('disabled', false);
+        }
+    });
+});
+</script>
+<?php
 llxFooter();
 $db->close();

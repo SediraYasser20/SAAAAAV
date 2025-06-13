@@ -46,7 +46,7 @@ class Receptionshowroom1 extends CommonObject
 	/**
 	 * @var string 	Name of table without prefix where object is stored. This is also the key used for extrafields management (so extrafields know the link to the parent table).
 	 */
-	public $table_element = 'recshow_receptionshowroom1';
+	public $table_element = 'llx_recshow_receptionshowroom1';
 
 	/**
 	 * @var string 	If permission must be checkec with hasRight('recshow', 'read') and not hasright('mymodyle', 'receptionshowroom1', 'read'), you can uncomment this line
@@ -125,7 +125,6 @@ class Receptionshowroom1 extends CommonObject
 		"last_main_doc" => array("type" => "varchar(255)", "label" => "LastMainDoc", "enabled" => "1", 'position' => 600, 'notnull' => 0, "visible" => "0",),
 		"import_key" => array("type" => "varchar(14)", "label" => "ImportId", "enabled" => "1", 'position' => 1000, 'notnull' => -1, "visible" => "-2",),
 		"model_pdf" => array("type" => "varchar(255)", "label" => "Model pdf", "enabled" => "1", 'position' => 1010, 'notnull' => -1, "visible" => "0",),
-		"serialnumber" => array("type" => "varchar(128)", "label" => "Serial Number", "enabled" => "1", 'position' => 5, 'notnull' => 1, "visible" => "1",),
 		"cpu" => array("type" => "varchar(128)", "label" => "CPU", "enabled" => "1", 'position' => 6, 'notnull' => 0, "visible" => "1",),
 		"ram" => array("type" => "varchar(128)", "label" => "Ram", "enabled" => "1", 'position' => 7, 'notnull' => 0, "visible" => "1",),
 		"stockage" => array("type" => "varchar(128)", "label" => "Stockage", "enabled" => "1", 'position' => 8, 'notnull' => 0, "visible" => "1",),
@@ -135,6 +134,7 @@ class Receptionshowroom1 extends CommonObject
 		"status" => array("type" => "integer", "label" => "Status", "enabled" => "1", 'position' => 64, 'notnull' => 1, "visible" => "1", "arrayofkeyval" => array("0" => "Received", "1" => "Pending Diagnosis", "2" => "In Diagnosis", "3" => "In Repair", "4" => "Repair Complete", "5" => "Ready", "6" => "On Hold", "7" => "Not Repairable", "8" => "Returned to Customer", "9" => "Closed", "10" => "Canceled"),),
 		"etatproduit" => array("type" => "integer", "label" => "Etat PRODUIT", "enabled" => "1", 'position' => 0, 'notnull' => 1, "visible" => "1", "arrayofkeyval" => array("0" => "new", "1" => "used"),),
 		"categoryproduit" => array("type" => "integer", "label" => "Category produit", "enabled" => "1", 'position' => 0, 'notnull' => 0, "visible" => "1", "arrayofkeyval" => array("0" => "pc", "1" => "lap"),),
+		"serialnumber" => array("type" => "varchar(128)", "label" => "Serial Number", "enabled" => "1", 'position' => 50, 'notnull' => 1, "visible" => "1",),
 	);
 	public $rowid;
 	public $ref;
@@ -149,7 +149,6 @@ class Receptionshowroom1 extends CommonObject
 	public $last_main_doc;
 	public $import_key;
 	public $model_pdf;
-	public $serialnumber;
 	public $cpu;
 	public $ram;
 	public $stockage;
@@ -159,6 +158,7 @@ class Receptionshowroom1 extends CommonObject
 	public $status;
 	public $etatproduit;
 	public $categoryproduit;
+	public $serialnumber;
 	// END MODULEBUILDER PROPERTIES
 
 

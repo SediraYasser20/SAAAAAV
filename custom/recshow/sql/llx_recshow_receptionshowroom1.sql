@@ -29,7 +29,6 @@ CREATE TABLE llx_recshow_receptionshowroom1(
 	last_main_doc varchar(255), 
 	import_key varchar(14), 
 	model_pdf varchar(255), 
-	serialnumber varchar(128) NOT NULL, 
 	cpu varchar(128), 
 	ram varchar(128), 
 	stockage varchar(128), 
@@ -38,6 +37,7 @@ CREATE TABLE llx_recshow_receptionshowroom1(
 	chargeur varchar(128), 
 	status integer NOT NULL, 
 	etatproduit integer NOT NULL, 
-	categoryproduit integer
+	categoryproduit integer, 
+	serialnumber varchar(128) NOT NULL
 	-- END MODULEBUILDER FIELDS
 ) ENGINE=innodb;

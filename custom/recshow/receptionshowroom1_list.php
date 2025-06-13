@@ -1,3 +1,4 @@
+```php
 <?php
 /* ------------------------------------------------------------------------
  * Copyright (C) 2017-2025 Your Name / Your Company
@@ -11,13 +12,12 @@
 
 /**
  *  \file       receptionshowroom1_list.php
- *  \ingroup    receptionshowroom1
+ *  \ingroup    recshow
  *  \brief      List page for Receptionshowroom1 objects without permission checks
  */
 
-require_once __DIR__ . '/../../main.inc.php'; // Load Dolibarr environment
+require_once __DIR__ . '/../../main.inc.php';
 
-// Load required libraries and classes
 require_once DOL_DOCUMENT_ROOT . '/core/lib/files.lib.php';
 require_once DOL_DOCUMENT_ROOT . '/core/lib/date.lib.php';
 require_once DOL_DOCUMENT_ROOT . '/core/class/html.formadmin.class.php';
@@ -28,45 +28,38 @@ require_once DOL_DOCUMENT_ROOT . '/core/class/html.form.class.php';
 
 require_once __DIR__ . '/class/receptionshowroom1.class.php';
 
-// Load translations
-$langs->load('receptionshowroom1@receptionshowroom1');
+$langs->load('recshow@recshow');
 
-// No permission checks here
+$action = GETPOST('action', 'aZ09');
+$sortfield = GETPOST('sortfield', 'aZ09');
+$sortorder = GETPOST('sortorder', 'aZ09');
+$page = max(GETPOST('page', 'int'), 0); // Dolibarr uses 0-based pagination
+$limit = (int) getDolGlobalInt('MAIN_SIZE_LISTE_LIMIT', 20);
 
-// Initialize variables from GET/POST
-$action = GETPOST('action', 'alpha');
-$sortfield = GETPOST('sortfield', 'alpha');
-$sortorder = GETPOST('sortorder', 'alpha');
-$page = max(GETPOST('page', 'int'), 1);
-$limit = $conf->liste_limit;
-
-// Search parameters
 $search_ref = GETPOST('search_ref', 'alpha');
 $search_label = GETPOST('search_label', 'alpha');
 $search_date = GETPOST('search_date', 'alpha');
 
-// Reset filters
+// Handle clear action
 if ($action === 'clear') {
     $search_ref = '';
     $search_label = '';
     $search_date = '';
-    $page = 1;
+    $page = 0;
 }
 
-// Instantiate object and helpers
+// Initialize objects
 $object = new Receptionshowroom1($db);
 $form = new Form($db);
 $extrafields = new ExtraFields($db);
 
-// Prepare SQL parts for search and filtering
-$sql = "SELECT r.rowid, r.ref, r.label, r.date_creation, r.fk_user_author";
-$sql .= ", u.login as user_author_name";
+// Build main SQL query
+$sql = "SELECT r.rowid, r.ref, r.label, r.date_creation, r.fk_user_author, r.etatproduit AS etat, r.categoryproduit AS category, r.serialnumber, r.fk_soc, r.status, u.login AS user_author_name, s.nom AS thirdparty_name";
+$sql .= " FROM " . MAIN_DB_PREFIX . $object->table_element . " AS r";
+$sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "user AS u ON r.fk_user_author = u.rowid";
+$sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "societe AS s ON r.fk_soc = s.rowid";
 
-// Join user table for author name
-$sql .= " FROM " . MAIN_DB_PREFIX . "receptionshowroom1 as r";
-$sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "user as u ON r.fk_user_author = u.rowid";
-
-// Where clauses
+// Apply filters
 $where = [];
 if ($search_ref) {
     $where[] = "r.ref LIKE '%" . $db->escape($search_ref) . "%'";
@@ -75,94 +68,113 @@ if ($search_label) {
     $where[] = "r.label LIKE '%" . $db->escape($search_label) . "%'";
 }
 if ($search_date) {
-    $where[] = "r.date_creation = '" . $db->escape($search_date) . "'";
+    $where[] = "DATE(r.date_creation) = '" . $db->escape($search_date) . "'"; // Compare date only
 }
-
 if (!empty($where)) {
     $sql .= " WHERE " . implode(' AND ', $where);
 }
 
 // Sorting
-if ($sortfield) {
-    $sql .= " ORDER BY " . $db->escape($sortfield) . " " . $db->escape($sortorder);
+if ($sortfield && in_array($sortfield, ['r.rowid', 'r.ref', 'r.label', 'r.date_creation', 'u.login', 's.nom', 'r.status', 'r.etatproduit', 'r.categoryproduit', 'r.serialnumber'])) {
+    $sql .= " ORDER BY " . $db->escape($sortfield) . " " . ($sortorder === 'DESC' ? 'DESC' : 'ASC');
 } else {
     $sql .= " ORDER BY r.rowid DESC";
 }
 
 // Pagination
-$offset = ($page - 1) * $limit;
-$sql .= " LIMIT $limit OFFSET $offset";
+$sql .= " " . $db->plimit($limit + 1, $page * $limit); // +1 to check for more records
 
-// Execute query
+// Execute main query
 $resql = $db->query($sql);
 if (!$resql) {
     dol_print_error($db);
     exit;
 }
 
-// Count total for pagination
-$sqlcount = "SELECT COUNT(*) as nb FROM " . MAIN_DB_PREFIX . "receptionshowroom1 as r";
+// Build count query
+$sqlcount = "SELECT COUNT(*) AS nb FROM " . MAIN_DB_PREFIX . $object->table_element . " AS r";
 if (!empty($where)) {
     $sqlcount .= " WHERE " . implode(' AND ', $where);
 }
 $rescount = $db->query($sqlcount);
-$objcount = $db->fetch_object($rescount);
-$total = $objcount ? $objcount->nb : 0;
+$total = 0;
+if ($rescount) {
+    $objcount = $db->fetch_object($rescount);
+    $total = (int) $objcount->nb;
+    $db->free($rescount);
+}
 
-// Start page output
+// Output header
 llxHeader('', $langs->trans('Receptionshowroom1List'));
 
-// Title and button to create new object
-print load_fiche_titre($langs->trans('Receptionshowroom1List'), '', 'receptionshowroom1@receptionshowroom1');
+print load_fiche_titre($langs->trans('Receptionshowroom1List'), '', 'receptionshowroom1@recshow');
 
-// Button to create new object (always shown)
+// Action buttons
 print '<div class="tabsAction">';
 print '<a class="butAction" href="receptionshowroom1_card.php?action=create">' . $langs->trans('NewReceptionshowroom1') . '</a>';
 print '</div>';
 
 // Search form
-print '<form method="GET" action="' . $_SERVER['PHP_SELF'] . '">';
-print '<input type="hidden" name="token" value="' . $_SESSION['newtoken'] . '">';
-print '<table class="noborder" width="100%"><tr class="liste_titre">';
-print '<td>' . $langs->trans('Ref') . '</td>';
-print '<td>' . $langs->trans('Label') . '</td>';
-print '<td>' . $langs->trans('DateCreation') . '</td>';
-print '<td></td>';
-print '</tr><tr class="liste_titre">';
-print '<td><input class="flat" type="text" name="search_ref" value="' . dol_escape_htmltag($search_ref) . '"></td>';
-print '<td><input class="flat" type="text" name="search_label" value="' . dol_escape_htmltag($search_label) . '"></td>';
-print '<td><input class="flat" type="date" name="search_date" value="' . dol_escape_htmltag($search_date) . '"></td>';
-print '<td><input type="submit" class="button" value="' . $langs->trans('Search') . '">';
-print ' <input type="submit" class="button" name="action" value="' . $langs->trans('Clear') . '"></td>';
-print '</tr></table>';
-print '</form>';
-
-// Table header
-print '<table class="noborder" width="100%">';
+print '<form method="GET" action="' . dol_escape_htmltag($_SERVER['PHP_SELF']) . '">';
+print '<input type="hidden" name="token" value="' . newToken() . '">';
+print '<table class="noborder centpercent">';
 print '<tr class="liste_titre">';
 print '<td>' . $langs->trans('Ref') . '</td>';
 print '<td>' . $langs->trans('Label') . '</td>';
 print '<td>' . $langs->trans('DateCreation') . '</td>';
-print '<td>' . $langs->trans('Author') . '</td>';
-print '<td>&nbsp;</td>';
+print '<td></td>';
+print '</tr>';
+print '<tr class="liste_titre">';
+print '<td><input class="flat maxwidth100" type="text" name="search_ref" value="' . dol_escape_htmltag($search_ref) . '"></td>';
+print '<td><input class="flat maxwidth100" type="text" name="search_label" value="' . dol_escape_htmltag($search_label) . '"></td>';
+print '<td><input class="flat maxwidth100" type="date" name="search_date" value="' . dol_escape_htmltag($search_date) . '"></td>';
+print '<td>';
+print '<input type="submit" class="button" value="' . $langs->trans('Search') . '">';
+print ' <input type="submit" class="button" name="action" value="clear" title="' . $langs->trans('Clear') . '">';
+print '</td>';
+print '</tr>';
+print '</table>';
+print '</form>';
+
+// Result table
+print '<table class="noborder centpercent">';
+print '<tr class="liste_titre">';
+print list_titre('Ref', 'r.ref', 'receptionshowroom1@recshow', 'ref', $sortfield, $sortorder);
+print list_titre('Label', 'r.label', 'receptionshowroom1@recshow', 'label', $sortfield, $sortorder);
+print list_titre('Date creation', 'r.date_creation', 'receptionshowroom1@recshow', 'date_creation', $sortfield, $sortorder);
+print list_titre('Author', 'u.login', 'receptionshowroom1@recshow', 'user_author_name', $sortfield, $sortorder);
+print list_titre('Type', 'r.etatproduit', 'receptionshowroom1@recshow', 'etatproduit', $sortfield, $sortorder);
+print list_titre('Category', 'r.categoryproduit', 'receptionshowroom1@recshow', 'categoryproduit', $sortfield, $sortorder);
+print list_titre('Serial', 'r.serialnumber', 'receptionshowroom1@recshow', 'serialnumber', $sortfield, $sortorder);
+print list_titre('ThirdParty', 's.nom', 'receptionshowroom1@recshow', 'thirdparty_name', $sortfield, $sortorder);
+print list_titre('Status', 'r.status', 'receptionshowroom1@recshow', 'status', $sortfield, $sortorder);
+print '<th class="right">' . $langs->trans('Action') . '</th>';
 print '</tr>';
 
-// Loop on results
-if ($resql && $db->num_rows($resql) > 0) {
-    while ($obj = $db->fetch_object($resql)) {
+$num = $db->num_rows($resql);
+if ($num > 0) {
+    $i = 0;
+    while ($i < min($num, $limit) && $obj = $db->fetch_object($resql)) {
         print '<tr class="oddeven">';
-        print '<td><a href="receptionshowroom1_card.php?id=' . $obj->rowid . '">' . dol_escape_htmltag($obj->ref) . '</a></td>';
+        print '<td><a href="receptionshowroom1_card.php?id=' . ((int) $obj->rowid) . '">' . dol_escape_htmltag($obj->ref) . '</a></td>';
         print '<td>' . dol_escape_htmltag($obj->label) . '</td>';
-        print '<td>' . dol_print_date(dol_stringtotime($obj->date_creation, 'dayhour'), 'dayhour') . '</td>';
+        print '<td>' . dol_print_date($db->jdate($obj->date_creation), 'dayhour') . '</td>';
         print '<td>' . dol_escape_htmltag($obj->user_author_name) . '</td>';
-        print '<td>';
-        print '<a href="receptionshowroom1_card.php?id=' . $obj->rowid . '&action=edit">' . img_edit() . '</a> ';
-        print '<a href="receptionshowroom1_card.php?id=' . $obj->rowid . '&action=delete" class="deletefield">' . img_delete() . '</a>';
+        print '<td>' . dol_escape_htmltag($object->fields['etatproduit']['arrayofkeyval'][$obj->etat]) . '</td>';
+        print '<td>' . dol_escape_htmltag($object->fields['categoryproduit']['arrayofkeyval'][$obj->category]) . '</td>';
+        print '<td>' . dol_escape_htmltag($obj->serialnumber) . '</td>';
+        print '<td>' . dol_escape_htmltag($obj->thirdparty_name) . '</td>';
+        print '<td>' . $object->getLibStatut($obj->status, 5) . '</td>';
+        print '<td class="right nowrap">';
+        print '<a href="receptionshowroom1_card.php?id=' . ((int) $obj->rowid) . '&action=edit">' . img_edit() . '</a> ';
+        print '<a href="receptionshowroom1_card.php?id=' . ((int) $obj->rowid) . '&action=delete&token=' . newToken() . '" class="deletefield">' . img_delete() . '</a>';
         print '</td>';
         print '</tr>';
+        $i++;
     }
+    $db->free($resql);
 } else {
-    print '<tr><td colspan="5">' . $langs->trans('NoRecordFound') . '</td></tr>';
+    print '<tr><td colspan="10" class="center">' . $langs->trans('NoRecordFound') . '</td></tr>';
 }
 
 print '</table>';
@@ -172,11 +184,13 @@ $param = '';
 if ($search_ref) $param .= '&search_ref=' . urlencode($search_ref);
 if ($search_label) $param .= '&search_label=' . urlencode($search_label);
 if ($search_date) $param .= '&search_date=' . urlencode($search_date);
+if ($sortfield) $param .= '&sortfield=' . urlencode($sortfield);
+if ($sortorder) $param .= '&sortorder=' . urlencode($sortorder);
 
 print '<div class="center">';
-print $form->showPagination($page, $langs->trans('Page'), $total, $limit, $_SERVER['PHP_SELF'] . '?action=' . $action . $param);
+print_barre_liste('', $page, $_SERVER['PHP_SELF'], $param, $sortfield, $sortorder, '', $total, $total, '', 0, '', '', $limit);
 print '</div>';
 
-// End of page
 llxFooter();
 $db->close();
+?>

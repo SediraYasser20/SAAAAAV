@@ -28,6 +28,22 @@ require_once DOL_DOCUMENT_ROOT.'/workstation/class/workstation.class.php';
 // Load translation files required by the page
 $langs->loadLangs(array("mrp", "stocks", "other", "product", "productbatch"));
 
+// BEGIN Access Control for ST Group
+// BEGIN Access Control for ST Group
+// BEGIN Access Control for ST Group
+if (empty($user->admin)) {
+    $sql = "SELECT 1 FROM llx_usergroup_user WHERE fk_user = ".((int) $user->id)." AND fk_usergroup = 4";
+    $resql = $db->query($sql);
+    if (!$resql || $db->num_rows($resql) == 0) {
+        accessforbidden('You are not authorized to access this page. Group restriction.');
+    }
+}
+// END Access Control for ST Group
+
+// END Access Control for ST Group
+
+// END Access Control for ST Group
+
 // Get parameters
 $id          = GETPOSTINT('id');
 $ref         = GETPOST('ref', 'alpha');
@@ -245,9 +261,32 @@ if ($action == 'confirm_reopen' && $user->admin) {
 				$tmpproduct = new Product($db);
 				$tmpproduct->fetch($line->fk_product);
 
+				// Calculate already consumed for this specific line (re-adding this logic)
+				$sub_lines_consumed = $object->fetchLinesLinked('consumed', $line->id);
+				$alreadyconsumed_for_this_line = 0;
+				foreach ($sub_lines_consumed as $sub_line) {
+					$alreadyconsumed_for_this_line += $sub_line['qty'];
+				}
+
 				$i = 1;
 				while (GETPOSTISSET('qty-'.$line->id.'-'.$i)) {
 					$qtytoprocess = (float) price2num(GETPOST('qty-'.$line->id.'-'.$i));
+
+					// Server-side validation for quantity to consume (re-adding this logic)
+					if ($qtytoprocess > 0) {
+						$max_allowed_to_consume_this_entry = $line->qty - $alreadyconsumed_for_this_line;
+						if ($qtytoprocess > $max_allowed_to_consume_this_entry) {
+							$langs->load("errors");
+							$message = $langs->trans("ErrorQtyToConsumeExceedsRemainingPlanned", $tmpproduct->ref, $qtytoprocess, $max_allowed_to_consume_this_entry);
+							if ($max_allowed_to_consume_this_entry < 0) {
+								 $message = $langs->trans("ErrorQtyToConsumeMakesTotalNegative", $tmpproduct->ref, $qtytoprocess);
+							} else if ($max_allowed_to_consume_this_entry == 0) {
+								 $message = $langs->trans("ErrorQtyToConsumeNoneRemaining", $tmpproduct->ref, $qtytoprocess);
+							}
+							setEventMessages($message, null, 'errors');
+							$error++; // Increment global error flag
+						}
+					}
 
 					if ($qtytoprocess != 0) {
 						// Check warehouse is set if we should have to
@@ -319,10 +358,52 @@ if ($action == 'confirm_reopen' && $user->admin) {
 				$tmpproduct = new Product($db);
 				$tmpproduct->fetch($line->fk_product);
 
-				$i = 1;
+				// Server-side category check for the current $line->fk_product
+				$is_category_24_product_server = false;
+				$sql_cat_server = "SELECT 1 FROM ".MAIN_DB_PREFIX."categorie_product WHERE fk_categorie = 24 AND fk_product = ".((int) $line->fk_product);
+				$resql_cat_server = $db->query($sql_cat_server);
+				if ($resql_cat_server) {
+					if ($db->num_rows($resql_cat_server) > 0) $is_category_24_product_server = true;
+					$db->free($resql_cat_server);
+				} else {
+					dol_syslog("Error checking product category (server-side) for product ID ".$line->fk_product, LOG_ERR);
+				}
+
+				// Calculate already produced for this specific line (re-adding this logic)
+				$sub_lines_produced = $object->fetchLinesLinked('produced', $line->id);
+				$alreadyproduced_for_this_line = 0;
+				foreach ($sub_lines_produced as $sub_line) {
+					$alreadyproduced_for_this_line += $sub_line['qty'];
+				}
+
+				// Get the total quantity to produce for this line from the MO line itself.
+				// This represents the full quantity for this "toproduce" line in the MO.
+				$total_quantity_for_line = $line->qty;
+
+				$i = 1; // Counter for form input fields (e.g., batchtoproduce-lineid-1, batchtoproduce-lineid-2)
+				
+				// Initialize a serial counter for product 31. This should persist across multiple form input fields for the same MO line.
+				$serial_counter_for_product_31 = 1;
+
 				while (GETPOSTISSET('qtytoproduce-'.$line->id.'-'.$i)) {
 					$qtytoprocess = (float) price2num(GETPOST('qtytoproduce-'.$line->id.'-'.$i));
 					$pricetoprocess = GETPOST('pricetoproduce-'.$line->id.'-'.$i) ? price2num(GETPOST('pricetoproduce-'.$line->id.'-'.$i)) : 0;
+
+					// Server-side validation for quantity to produce (re-adding this logic)
+					if ($qtytoprocess > 0) {
+						$max_allowed_to_produce_this_entry = $line->qty - $alreadyproduced_for_this_line;
+						if ($qtytoprocess > $max_allowed_to_produce_this_entry) {
+							$langs->load("errors");
+							$message = $langs->trans("ErrorQtyToProduceExceedsRemainingPlanned", $tmpproduct->ref, $qtytoprocess, $max_allowed_to_produce_this_entry);
+							if ($max_allowed_to_produce_this_entry < 0) {
+								 $message = $langs->trans("ErrorQtyToProduceMakesTotalNegative", $tmpproduct->ref, $qtytoprocess);
+							} else if ($max_allowed_to_produce_this_entry == 0) {
+								 $message = $langs->trans("ErrorQtyToProduceNoneRemaining", $tmpproduct->ref, $qtytoprocess);
+							}
+							setEventMessages($message, null, 'errors');
+							$error++; // Increment global error flag
+						}
+					}
 
 if ($pricetoprocess == 0) {
     $sql = "SELECT pmp FROM llx_product WHERE rowid = ".((int)$line->fk_product);
@@ -344,52 +425,139 @@ if ($pricetoprocess == 0) {
 								setEventMessages($langs->trans("ErrorFieldRequiredForProduct", $langs->transnoentitiesnoconv("Warehouse"), $tmpproduct->ref), null, 'errors');
 								$error++;
 							}
-							if (isModEnabled('productbatch') && $tmpproduct->status_batch && (!GETPOST('batchtoproduce-'.$line->id.'-'.$i))) {
-								$langs->load("errors");
-								setEventMessages($langs->trans("ErrorFieldRequiredForProduct", $langs->transnoentitiesnoconv("Batch"), $tmpproduct->ref), null, 'errors');
-								$error++;
-							}
+							// Batch check: Only error if batch is required AND (it's not product 31 OR (it is product 31 AND total_quantity_for_line is 1))
+// Batch check: Only error if batch is required AND 
+// 1) it's not product 31 (multi) AND not category 24 (multi), OR 
+// 2) it's product 31 or category 24 but total_qty == 1
+if (isModEnabled('productbatch') 
+    && $tmpproduct->status_batch 
+    && !GETPOST('batchtoproduce-'.$line->id.'-'.$i)
+) {
+    // skip batch-required check when this is a Cat-24 multi-qty produce
+    $isMulti31 = ($line->fk_product == 31 && $total_quantity_for_line > 1);
+    $isMultiCat24 = ($is_category_24_product_server && $total_quantity_for_line > 1);
+
+    if (
+        // if it's neither a multi-31 nor a multi-Cat24 (so truly batch-required)
+        (! $isMulti31 && ! $isMultiCat24)
+        // OR even if it is one of those, but qty==1 (single unit still needs batch)
+        || $total_quantity_for_line == 1
+    ) {
+        $langs->load("errors");
+        setEventMessages(
+            $langs->trans(
+                "ErrorFieldRequiredForProduct",
+                $langs->transnoentitiesnoconv("Batch"),
+                $tmpproduct->ref
+            ),
+            null,
+            'errors'
+        );
+        $error++;
+    }
+}
+
 						}
 
-						$idstockmove = 0;
+						$idstockmove = 0; // Initialize, will be set by stockmove->reception or loop
 						if (!$error && GETPOST('idwarehousetoproduce-'.$line->id.'-'.$i) > 0) {
-							// Record stock movement
-							$id_product_batch = 0;
 							$stockmove->origin_type = $object->element;
 							$stockmove->origin_id = $object->id;
 							$stockmove->context['mrp_role'] = 'toproduce';
+							$id_product_batch = 0; // Assuming this is not used or handled differently for batch products
 
-							$idstockmove = $stockmove->reception($user, $line->fk_product, GETPOST('idwarehousetoproduce-'.$line->id.'-'.$i), $qtytoprocess, $pricetoprocess, $labelmovement, '', '', GETPOST('batchtoproduce-'.$line->id.'-'.$i), dol_now(), $id_product_batch, $codemovement);
-							if ($idstockmove < 0) {
-								$error++;
-								setEventMessages($stockmove->error, $stockmove->errors, 'errors');
+							// Consolidate product 31 (qty > 1) and category 24 (qty > 1)
+							if (($line->fk_product == 31 && $total_quantity_for_line > 1) || ($is_category_24_product_server && $total_quantity_for_line > 1)) {
+								if ($qtytoprocess > 0) { // Ensure there's a quantity for this specific form input
+									// Serial generation logic is now common for both product 31 (qty>1) and Cat 24 (qty>1)
+									// $serial_counter_for_product_31 was specific, now this logic is general for MO-Ref-X type serials.
+									// The serial number is based on $alreadyproduced_for_this_line, which is specific to the MO line.
+									for ($unit_count = 0; $unit_count < $qtytoprocess; $unit_count++) {
+										$current_batch_to_use_unit = $object->ref . '-' . ($alreadyproduced_for_this_line + $unit_count + 1);
+
+
+										// Calculate price per unit for this specific stock movement and MoLine
+										// $pricetoprocess is the total price for $qtytoprocess items from the form input field
+										$unit_price = ($qtytoprocess > 0 ? price2num($pricetoprocess / $qtytoprocess, 'MU') : price2num($pricetoprocess, 'MU'));
+
+										$idstockmove_unit = $stockmove->reception($user, $line->fk_product, GETPOST('idwarehousetoproduce-'.$line->id.'-'.$i), 1, $unit_price, $labelmovement, '', '', $current_batch_to_use_unit, dol_now(), $id_product_batch, $codemovement);
+										if ($idstockmove_unit < 0) {
+											$error++;
+											setEventMessages($stockmove->error, $stockmove->errors, 'errors');
+											break; // Break from for loop
+										}
+
+										$moline_unit = new MoLine($db);
+										$moline_unit->fk_mo = $object->id;
+										$moline_unit->position = $pos;
+										$moline_unit->fk_product = $line->fk_product;
+										$moline_unit->fk_warehouse = GETPOSTINT('idwarehousetoproduce-'.$line->id.'-'.$i);
+										$moline_unit->qty = 1; // Each MoLine is for a single unit
+										$moline_unit->batch = $current_batch_to_use_unit;
+										$moline_unit->role = 'produced';
+										$moline_unit->fk_mrp_production = $line->id; // Link to the original "toproduce" line
+										$moline_unit->fk_stock_movement = $idstockmove_unit;
+										$moline_unit->fk_user_creat = $user->id;
+
+										$resultmoline_unit = $moline_unit->create($user);
+										if ($resultmoline_unit <= 0) {
+											$error++;
+											setEventMessages($moline_unit->error, $moline_unit->errors, 'errors');
+											break; // Break from for loop
+										}
+										$pos++;
+									}
+									if ($error) break; // Break from while GETPOSTISSET loop if error occurred in for loop
+								}
+							} else { 
+								// This else handles:
+								// 1. Product 31 with total_quantity_for_line == 1
+								// 2. Category 24 with total_quantity_for_line == 1
+								// 3. All other products (not product 31, not category 24) regardless of their total_quantity_for_line.
+								$current_batch_to_use = '';
+								// For Cat 24 (qty==1) and Product 31 (qty==1), the batch is MO ref.
+								// $total_quantity_for_line is defined earlier for the current $line.
+								if ($is_category_24_product_server && $total_quantity_for_line == 1) {
+									$current_batch_to_use = $object->ref;
+								} elseif ($line->fk_product == 31 && $total_quantity_for_line == 1) {
+									$current_batch_to_use = $object->ref;
+								} else {
+									// For all other products, or if batch is manually entered for Cat24/P31 Qty=1 (though UI should prevent this)
+									$current_batch_to_use = GETPOST('batchtoproduce-'.$line->id.'-'.$i);
+								}
+
+								$idstockmove = $stockmove->reception($user, $line->fk_product, GETPOST('idwarehousetoproduce-'.$line->id.'-'.$i), $qtytoprocess, $pricetoprocess, $labelmovement, '', '', $current_batch_to_use, dol_now(), $id_product_batch, $codemovement);
+								if ($idstockmove < 0) {
+									$error++;
+									setEventMessages($stockmove->error, $stockmove->errors, 'errors');
+								}
+
+								if (!$error) {
+									// Standard MoLine creation
+									$moline = new MoLine($db);
+									$moline->fk_mo = $object->id;
+									$moline->position = $pos;
+									$moline->fk_product = $line->fk_product;
+									$moline->fk_warehouse = GETPOSTINT('idwarehousetoproduce-'.$line->id.'-'.$i);
+									$moline->qty = $qtytoprocess;
+									$moline->batch = $current_batch_to_use; 
+									$moline->role = 'produced';
+									$moline->fk_mrp_production = $line->id;
+									$moline->fk_stock_movement = $idstockmove;
+									$moline->fk_user_creat = $user->id;
+									$resultmoline = $moline->create($user);
+									if ($resultmoline <= 0) {
+										$error++;
+										setEventMessages($moline->error, $moline_errors, 'errors');
+									}
+									$pos++;
+								}
 							}
-						}
-
-						if (!$error) {
-							// Record production
-							$moline = new MoLine($db);
-							$moline->fk_mo = $object->id;
-							$moline->position = $pos;
-							$moline->fk_product = $line->fk_product;
-							$moline->fk_warehouse = GETPOSTINT('idwarehousetoproduce-'.$line->id.'-'.$i);
-							$moline->qty = $qtytoprocess;
-							$moline->batch = GETPOST('batchtoproduce-'.$line->id.'-'.$i);
-							$moline->role = 'produced';
-							$moline->fk_mrp_production = $line->id;
-							$moline->fk_stock_movement = $idstockmove;
-							$moline->fk_user_creat = $user->id;
-
-							$resultmoline = $moline->create($user);
-							if ($resultmoline <= 0) {
-								$error++;
-								setEventMessages($moline->error, $moline->errors, 'errors');
-							}
-
-							$pos++;
 						}
 					}
-
+					if ($error && ($line->fk_product == 31 && $total_quantity_for_line > 1 || $is_category_24_product_server && $total_quantity_for_line > 1) ) { // If error occurred in special multi-qty processing, break from while
+						break; 
+					}
 					$i++;
 				}
 			}
@@ -568,7 +736,7 @@ $tmpwarehouse = new Entrepot($db);
 $tmpbatch = new Productlot($db);
 $tmpstockmovement = new MouvementStock($db);
 
-$title = $langs->trans('Mo');
+$title = $langs->trans('CustomPCOrder'); // Changed from 'Mo'
 $help_url = 'EN:Module_Manufacturing_Orders|FR:Module_Ordres_de_Fabrication|DE:Modul_Fertigungsauftrag';
 $morejs = array('/mrp/js/lib_dispatch.js.php');
 llxHeader('', $title, $help_url, '', 0, 0, $morejs, '', '', 'mod-mrp page-card_production');
@@ -1465,14 +1633,12 @@ if ($object->id > 0 && (empty($action) || ($action != 'edit' && $action != 'crea
 
 						// Qty
 				// Qty
-// Qty
+// Qty (re-applying editability and client-side validation)
 print '<td class="right">';
-if ($user->admin) { // Show editable input for admins
-    print '<input type="text" class="width50 right" id="qtytoconsume-' . $line->id . '-' . $i . '" name="qty-' . $line->id . '-' . $i . '" value="' . $preselected . '" ' . $disable . '>';
-} else { // For non-admins, show quantity as text and include hidden input
-    print '<span class="width50 right">' . $preselected . '</span>';
-    print '<input type="hidden" name="qty-' . $line->id . '-' . $i . '" value="' . $preselected . '">';
-}
+$remaining_to_consume = $line->qty - $alreadyconsumed;
+// $preselected is already calculated as: (GETPOSTISSET('qty-'.$line->id.'-'.$i) ? GETPOST('qty-'.$line->id.'-'.$i) : max(0, $line->qty - $alreadyconsumed));
+        
+print '<input type="number" class="width50 right" id="qtytoconsume-' . $line->id . '-' . $i . '" name="qty-' . $line->id . '-' . $i . '" value="' . $preselected . '" min="0" max="' . $remaining_to_consume . '" step="any" ' . ($remaining_to_consume <= 0 && !GETPOSTISSET('qty-'.$line->id.'-'.$i) ? 'disabled' : '') . '>';
 print '</td>';
 						// Unit
 						print '<td></td>';
@@ -1705,6 +1871,20 @@ print '</td>';
 					$tmpproduct = new Product($db);
 					$tmpproduct->fetch($line->fk_product);
 
+					$is_category_24_product = false;
+					$sql_cat = "SELECT 1 FROM ".MAIN_DB_PREFIX."categorie_product ";
+					$sql_cat .= " WHERE fk_categorie = 24 AND fk_product = ".((int) $line->fk_product);
+					$resql_cat = $db->query($sql_cat);
+					if ($resql_cat) {
+						if ($db->num_rows($resql_cat) > 0) {
+							$is_category_24_product = true;
+						}
+						$db->free($resql_cat); // Free the result
+					} else {
+						// Optional: Log error if query fails
+						dol_syslog("Error checking product category linkage for product ID ".$line->fk_product, LOG_ERR);
+					}
+
 					$arrayoflines = $object->fetchLinesLinked('produced', $line->id);
 					$alreadyproduced = 0;
 					foreach ($arrayoflines as $line2) {
@@ -1886,21 +2066,36 @@ print '</td>';
 					if (in_array($action, array('consumeorproduce', 'consumeandproduceall'))) {
 						print '<!-- Enter line to produce -->'."\n";
 						$maxQty = 1;
-						print '<tr data-max-qty="'.$maxQty.'" name="batch_'.$line->id.'_'.$i.'">';
+
+						// Define $is_category_24_product_server here for the scope of rendering the input row
+						// This is needed for the data-is-category-24 attribute and JS logic.
+						// This definition was previously only in the action processing block.
+						$is_category_24_product_server_for_display = false; // Use a distinct name to avoid confusion if the other is in scope, though it shouldn't be.
+						$sql_cat_server_display = "SELECT 1 FROM ".MAIN_DB_PREFIX."categorie_product WHERE fk_categorie = 24 AND fk_product = ".((int) $line->fk_product);
+						$resql_cat_server_display = $db->query($sql_cat_server_display);
+						if ($resql_cat_server_display) {
+							if ($db->num_rows($resql_cat_server_display) > 0) $is_category_24_product_server_for_display = true;
+							$db->free($resql_cat_server_display);
+						} else {
+							dol_syslog("Error checking product category (server-side display) for product ID ".$line->fk_product, LOG_ERR);
+						}
+
+						// Add data-is-category-24 attribute for JS
+						$is_cat_24_for_js = $is_category_24_product_server_for_display ? '1' : '0';
+						print '<tr data-product-id="'.(!empty($line->fk_product) ? $line->fk_product : '0').'" data-is-category-24="'.$is_cat_24_for_js.'" data-mo-ref="'.dol_escape_htmltag($object->ref).'" data-max-qty="'.$maxQty.'" name="batch_'.$line->id.'_'.$i.'">';
 						// Product
 						print '<td><span class="opacitymedium">'.$langs->trans("ToProduce").'</span></td>';
 						$preselected = (GETPOSTISSET('qtytoproduce-'.$line->id.'-'.$i) ? GETPOST('qtytoproduce-'.$line->id.'-'.$i) : max(0, $line->qty - $alreadyproduced));
 						if ($action == 'consumeorproduce' && !GETPOSTISSET('qtytoproduce-'.$line->id.'-'.$i)) {
 							$preselected = 0;
 						}
-						// Qty
-					    print '<td class="right">';
-    if ($user->admin) { // Show editable input for admins
-        print '<input type="text" class="width50 right" id="qtytoproduce-'.$line->id.'-'.$i.'" name="qtytoproduce-'.$line->id.'-'.$i.'" value="'.$preselected.'">';
-    } else { // For non-admins, show quantity as text and include hidden input
-        print '<span class="width50 right">'.$preselected.'</span>';
-        print '<input type="hidden" name="qtytoproduce-'.$line->id.'-'.$i.'" value="'.$preselected.'">';
-    }
+						// Qty (re-applying editability and client-side validation)
+        print '<td class="right">';
+        $remaining_to_produce = $line->qty - $alreadyproduced;
+        // $preselected is already calculated as: (GETPOSTISSET('qtytoproduce-'.$line->id.'-'.$i) ? GETPOST('qtytoproduce-'.$line->id.'-'.$i) : max(0, $line->qty - $alreadyproduced));
+        
+        print '<input type="number" class="width50 right" id="qtytoproduce-'.$line->id.'-'.$i.'" name="qtytoproduce-'.$line->id.'-'.$i.'" value="'.$preselected.'" min="0" max="' . $remaining_to_produce . '" step="any" ' . ($remaining_to_produce <= 0 && !GETPOSTISSET('qtytoproduce-'.$line->id.'-'.$i) ? 'disabled' : '') . '>';
+        print '</td>';
 						//Unit
 						if (getDolGlobalInt('PRODUCT_USE_UNITS')) {
 							print '<td class="right"></td>';
@@ -1977,8 +2172,31 @@ print '</td>';
 						if (isModEnabled('productbatch')) {
 							print '<td>';
 							if ($tmpproduct->status_batch) {
-								$preselected = (GETPOSTISSET('batchtoproduce-'.$line->id.'-'.$i) ? GETPOST('batchtoproduce-'.$line->id.'-'.$i) : '');
-								print '<input type="text" class="width75" name="batchtoproduce-'.$line->id.'-'.$i.'" value="'.$preselected.'">';
+								$batch_input_value = (GETPOSTISSET('batchtoproduce-'.$line->id.'-'.$i) ? dol_escape_htmltag(GETPOST('batchtoproduce-'.$line->id.'-'.$i)) : '');
+								$batch_input_readonly = '';
+								$batch_input_value = (GETPOSTISSET('batchtoproduce-'.$line->id.'-'.$i) ? dol_escape_htmltag(GETPOST('batchtoproduce-'.$line->id.'-'.$i)) : '');
+
+								// $total_quantity_for_line needs to be defined for this scope as well.
+								// It's typically $line->qty for the "toproduce" line.
+								$total_quantity_for_line_display = $line->qty;
+
+
+								// Use $is_category_24_product_server_for_display for the rendering logic
+								if ($is_category_24_product_server_for_display && $total_quantity_for_line_display > 1) {
+									// Value will be set by JS, or could be pre-filled if desired, but JS will manage it
+									// For now, leave it empty here, JS will fill and make readonly.
+									// $batch_input_value = ''; // Let JS handle this for now.
+									$batch_input_readonly = 'readonly="readonly"'; // JS will also set this, but good for consistency
+								} elseif ($is_category_24_product_server_for_display && $total_quantity_for_line_display == 1) {
+									$batch_input_value = dol_escape_htmltag($object->ref); // Use MO reference
+									$batch_input_readonly = 'readonly="readonly"';
+								} elseif ($line->fk_product == 31) { // Handled by JS primarily
+									// Value and readonly state will be managed by existing JS for product 31
+									// No specific value override here, let JS take precedence.
+								}
+								// For other products, $batch_input_value remains as submitted or empty, and $batch_input_readonly remains empty.
+								
+								print '<input type="text" class="width75" id="batchtoproduce-'.$line->id.'-'.$i.'" name="batchtoproduce-'.$line->id.'-'.$i.'" value="'.$batch_input_value.'" '.$batch_input_readonly.'>';
 							}
 							print '</td>';
 							// Batch number in same column than the stock movement picto
@@ -2135,5 +2353,122 @@ print '</td>';
 }
 
 // End of page
+
+?>
+<script type="text/javascript">
+  var currentMoRef = "<?php echo dol_escape_js($object->ref); ?>";
+
+  $(document).ready(function() {
+    // Target rows within the 'to produce' table that have batch inputs.
+    // These rows now have data-product-id, data-is-category-24 and data-mo-ref attributes.
+    $('tr[data-mo-ref]').each(function() {
+        var $row = $(this);
+        var productId = $row.data('product-id');
+        var isCategory24 = $row.data('is-category-24') == '1';
+        var moRefFromDataAttr = $row.data('mo-ref'); 
+
+        // Find the input field by its ID, which should now be set in PHP
+        var lineIdInputName = $row.find('input[name^="batchtoproduce-"]').attr('name');
+        var inputFieldId = '';
+        if (lineIdInputName) {
+            var idParts = lineIdInputName.match(/batchtoproduce-(\d+-\d+)/);
+            if (idParts && idParts[1]) {
+                 inputFieldId = 'batchtoproduce-' + idParts[1];
+            }
+        }
+        var $inputField = $('#' + inputFieldId);
+
+
+        if ($inputField.length) {
+            var lineIdMatch = inputFieldId.match(/batchtoproduce-(\d+)-/);
+
+            if (lineIdMatch && lineIdMatch[1]) {
+                var lineId = lineIdMatch[1];
+                var $qtyOrderedElement = $('#qty_ordered_' + lineId); // This is total planned qty for the MO line
+                
+                if ($qtyOrderedElement.length > 0 && $qtyOrderedElement.val() !== "") {
+                    var totalQtyForLine = parseFloat($qtyOrderedElement.val());
+
+                    if (productId == 31 && totalQtyForLine > 1) {
+                        $inputField.val(''); 
+                        $inputField.prop('readonly', true);
+                        if ($inputField.next('.auto-serial-info').length === 0) {
+                            $inputField.after('<small class="auto-serial-info"> <?php echo $langs->trans("AutoGeneratedSerialQtyGreaterThanOne"); ?></small>');
+                        }
+                    } else if (productId == 31 && totalQtyForLine == 1) {
+                        if (typeof moRefFromDataAttr !== 'undefined' && moRefFromDataAttr) {
+                            $inputField.val(moRefFromDataAttr);
+                        } else if (typeof currentMoRef !== 'undefined') {
+                             $inputField.val(currentMoRef);
+                        }
+                        $inputField.prop('readonly', true);
+                        $inputField.next('.auto-serial-info').remove(); 
+                    } else if (isCategory24 && totalQtyForLine > 1) {
+                        $inputField.val(''); // Clear value, will display info message
+                        $inputField.prop('readonly', true);
+                        var serialInfoMsg = "<?php echo $langs->trans("SerialsAutoGeneratedMessage"); ?>".replace('%s', moRefFromDataAttr + '-1, ' + moRefFromDataAttr + '-2...');
+                        if ($inputField.next('.auto-serial-info').length === 0) {
+                            $inputField.after('<small class="auto-serial-info"> ' + serialInfoMsg + '</small>');
+                        } else { // Update if already there
+                            $inputField.next('.auto-serial-info').html(' ' + serialInfoMsg);
+                        }
+                    } else if (isCategory24 && totalQtyForLine == 1) {
+                        // Batch is MO ref, readonly
+                        if (typeof moRefFromDataAttr !== 'undefined' && moRefFromDataAttr) {
+                            $inputField.val(moRefFromDataAttr);
+                        }
+                        $inputField.prop('readonly', true);
+                        $inputField.next('.auto-serial-info').remove();
+                    } else { // Not product 31 and not (category 24 with qty > 1)
+                        // Ensure field is editable and no message is shown if it's not special case
+                        // Batch input might have been set to readonly by PHP if it was cat 24 qty 1, ensure it is not if conditions change.
+                        // However, if it's cat 24 qty 1, it should remain readonly with MO ref.
+                        // The PHP part already sets readonly for cat 24 qty 1.
+                        // So this 'else' means: not product 31, not (cat 24 qty > 1), not (cat 24 qty == 1)
+                        // This means it's a standard product OR cat 24 but something went wrong with qty check.
+                        // For standard products, it should be editable.
+                        if (!isCategory24) { // Only make editable if not category 24 at all. Cat 24 Qty 1 is handled above.
+                           $inputField.prop('readonly', false);
+                        }
+                        $inputField.next('.auto-serial-info').remove(); 
+                    }
+                } else { // Fallback if qty_ordered_LINEID is not found or empty
+                    console.warn("JavaScript: Could not find #qty_ordered_" + lineId + " or it was empty for product " + productId + ". Batch field behavior might be unexpected.");
+                    // Default behavior for product 31 if quantity unknown (treat as 1)
+                    if (productId == 31) {
+                        if (typeof moRefFromDataAttr !== 'undefined' && moRefFromDataAttr) {
+                            $inputField.val(moRefFromDataAttr);
+                        } else if (typeof currentMoRef !== 'undefined') {
+                            $inputField.val(currentMoRef);
+                        }
+                        $inputField.prop('readonly', true);
+                    } else if (isCategory24) { // Default for cat 24 if quantity unknown (treat as 1)
+                         if (typeof moRefFromDataAttr !== 'undefined' && moRefFromDataAttr) {
+                            $inputField.val(moRefFromDataAttr);
+                        }
+                        $inputField.prop('readonly', true);
+                    }
+                    // For other products, leave as is (should be editable by default)
+                    $inputField.next('.auto-serial-info').remove();
+                }
+            } else { // Fallback if lineId cannot be parsed from input field ID
+                 console.warn("JavaScript: Could not parse lineId from input ID '" + inputFieldId + "'. Batch field behavior might be unexpected.");
+                 // Default behavior for product 31 if lineId unknown
+                 if (productId == 31) {
+                     if (typeof moRefFromDataAttr !== 'undefined' && moRefFromDataAttr) { $inputField.val(moRefFromDataAttr); }
+                     else if (typeof currentMoRef !== 'undefined') { $inputField.val(currentMoRef); }
+                     $inputField.prop('readonly', true);
+                 } else if (isCategory24) { // Default for cat 24 if lineId unknown
+                     if (typeof moRefFromDataAttr !== 'undefined' && moRefFromDataAttr) { $inputField.val(moRefFromDataAttr); }
+                     $inputField.prop('readonly', true);
+                 }
+                 $inputField.next('.auto-serial-info').remove();
+            }
+        }
+    });
+  });
+</script>
+<?php
+
 llxFooter();
 $db->close();

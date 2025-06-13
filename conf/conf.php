@@ -21,6 +21,7 @@ $dolibarr_main_db_character_set='utf8';
 $dolibarr_main_db_collation='utf8_unicode_ci';
 // Authentication settings
 $dolibarr_main_authentication='dolibarr';
+$dolibarr_main_loghandler = 'file:C:/xampp/htdocs/documents/logs/dolibarr.log';
 
 //$dolibarr_main_demo='autologin,autopass';
 // Security settings

@@ -51,7 +51,7 @@ if (empty($object) || !is_object($object)) {
 '@phan-var-force CommonObject $this
  @phan-var-force CommonObject $object';
 
-global $filtertype;
+global $filtertype, $user;
 if (empty($filtertype)) {
 	$filtertype = 0;
 }
@@ -89,13 +89,13 @@ if ($filtertype != 1) { // Product
 }
 if ($filtertype != 1 || getDolGlobalString('STOCK_SUPPORTS_SERVICES')) { // Product or stock support for Services is active
 	// Qty frozen
-	print '<td class="linecolqtyfrozen right">' . $form->textwithpicto($langs->trans('QtyFrozen'), $langs->trans("QuantityConsumedInvariable")) . '</td>';
+	if ($user->admin) { print '<td class="linecolqtyfrozen right">' . $form->textwithpicto($langs->trans('QtyFrozen'), $langs->trans("QuantityConsumedInvariable")) . '</td>'; }
 
 	// Disable stock change
-	print '<td class="linecoldisablestockchange right">' . $form->textwithpicto($langs->trans('DisableStockChange'), $langs->trans('DisableStockChangeHelp')) . '</td>';
+	if ($user->admin) { print '<td class="linecoldisablestockchange right">' . $form->textwithpicto($langs->trans('DisableStockChange'), $langs->trans('DisableStockChangeHelp')) . '</td>'; }
 
 	// Efficiency
-	print '<td class="linecolefficiency right">' . $form->textwithpicto($langs->trans('ManufacturingEfficiency'), $langs->trans('ValueOfMeansLoss')) . '</td>';
+	if ($user->admin) { print '<td class="linecolefficiency right">' . $form->textwithpicto($langs->trans('ManufacturingEfficiency'), $langs->trans('ValueOfMeansLoss')) . '</td>'; }
 }
 
 // Service and workstations are active

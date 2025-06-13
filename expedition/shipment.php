@@ -895,17 +895,27 @@ if ($id > 0 || !empty($ref)) {
 
 				//print '<tr>';
 
-				if (isModEnabled('stock')) {
-					//print '<td>';
-					print $langs->trans("WarehouseSource");
-					//print '</td>';
-					//print '<td>';
-					print $formproduct->selectWarehouses(!empty($object->warehouse_id) ? $object->warehouse_id : 'ifone', 'entrepot_id', '', 1, 0, 0, '', 0, 0, array(), 'minwidth200');
-					if (count($formproduct->cache_warehouses) <= 0) {
-						print ' &nbsp; '.$langs->trans("WarehouseSourceNotDefined").' <a href="'.DOL_URL_ROOT.'/product/stock/card.php?action=create">'.$langs->trans("AddOne").'</a>';
-					}
-					//print '</td>';
-				}
+			if (isModEnabled('stock')) {
+    print $langs->trans("WarehouseSource");
+    if (!empty($user->fk_warehouse)) {
+        // Fetch the user's default warehouse directly
+        $warehouse = new Entrepot($db);
+        $result = $warehouse->fetch($user->fk_warehouse);
+        if ($result > 0) {
+            // Manually create a dropdown with only the default warehouse
+            print '<select name="entrepot_id" class="minwidth200">';
+            print '<option value="' . $warehouse->id . '" selected>' . dol_escape_htmltag($warehouse->ref) . '</option>';
+            print '</select>';
+        } else {
+            // Handle case where the warehouse doesn't exist
+            print '<span class="error">' . $langs->trans("WarehouseNotFound") . '</span>';
+        }
+    } else {
+        // Fallback for users without a default warehouse
+        print $formproduct->selectWarehouses('ifone', 'entrepot_id', '', 1, 0, 0, '', 0, 0, array(), 'minwidth200');
+        print '   <span class="opacitymedium">' . $langs->trans("NoDefaultWarehouseSet") . '</span>';
+    }
+}
 				//print '<td class="center">';
 				print '<input type="submit" class="butAction" named="save" value="'.$langs->trans("CreateShipment").'">';
 				if ($toBeShippedTotal <= 0) {

@@ -64,7 +64,7 @@ if (empty($object) || !is_object($object)) {
 @phan-var-force Societe $seller
 ';
 
-global $forceall, $filtertype;
+global $forceall, $filtertype, $user;
 
 if (empty($forceall)) {
 	$forceall = 0;
@@ -165,19 +165,25 @@ if ($filtertype != 1) { // Product
 }
 if ($filtertype != 1 || getDolGlobalString('STOCK_SUPPORTS_SERVICES')) { // Product or stock support for Services is active
 	// Qty frozen
-	$coldisplay++;
-	print '<td class="nobottom linecolqtyfrozen right"><input type="checkbox" name="qty_frozen" id="qty_frozen" class="flat right" value="1"' . (GETPOSTISSET("qty_frozen") ? (GETPOSTINT('qty_frozen') ? ' checked="checked"' : '') : ($line->qty_frozen ? ' checked="checked"' : '')) . '>';
-	print '</td>';
+	if ($user->admin) {
+		$coldisplay++;
+		print '<td class="nobottom linecolqtyfrozen right"><input type="checkbox" name="qty_frozen" id="qty_frozen" class="flat right" value="1"' . (GETPOSTISSET("qty_frozen") ? (GETPOSTINT('qty_frozen') ? ' checked="checked"' : '') : ($line->qty_frozen ? ' checked="checked"' : '')) . '>';
+		print '</td>';
+	}
 
 	// Disable stock change
-	$coldisplay++;
-	print '<td class="nobottom linecoldisablestockchange right"><input type="checkbox" name="disable_stock_change" id="disable_stock_change" class="flat right" value="1"' . (GETPOSTISSET('disablestockchange') ? (GETPOSTINT("disable_stock_change") ? ' checked="checked"' : '') : ($line->disable_stock_change ? ' checked="checked"' : '')) . '">';
-	print '</td>';
+	if ($user->admin) {
+		$coldisplay++;
+		print '<td class="nobottom linecoldisablestockchange right"><input type="checkbox" name="disable_stock_change" id="disable_stock_change" class="flat right" value="1"' . (GETPOSTISSET('disablestockchange') ? (GETPOSTINT("disable_stock_change") ? ' checked="checked"' : '') : ($line->disable_stock_change ? ' checked="checked"' : '')) . '">';
+		print '</td>';
+	}
 
 	// Efficiency
-	$coldisplay++;
-	print '<td class="nobottom nowrap linecollost right">';
-	print '<input type="text" size="2" name="efficiency" id="efficiency" class="flat right" value="' . $line->efficiency . '"></td>';
+	if ($user->admin) {
+		$coldisplay++;
+		print '<td class="nobottom nowrap linecollost right">';
+		print '<input type="text" size="2" name="efficiency" id="efficiency" class="flat right" value="' . $line->efficiency . '"></td>';
+	}
 }
 
 // Service and workstations are active

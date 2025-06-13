@@ -39,6 +39,7 @@ require_once DOL_DOCUMENT_ROOT.'/product/class/product.class.php';
 require_once DOL_DOCUMENT_ROOT.'/core/lib/company.lib.php';
 require_once DOL_DOCUMENT_ROOT.'/core/lib/functions2.lib.php';
 require_once DOL_DOCUMENT_ROOT.'/core/lib/pdf.lib.php';
+require_once DOL_DOCUMENT_ROOT.'/mrp/class/mo.class.php'; // Added for MO
 
 require_once DOL_DOCUMENT_ROOT . '/core/modules/facture/modules_facture.php';
 
@@ -522,6 +523,15 @@ $tab_top = max($this->marge_haute + 90, $pagehead['top_shift'] + $pagehead['ship
             $pageposbeforeprintlines = $pdf->getPage();
             $pagenb = $pageposbeforeprintlines;
             for ($i = 0; $i < $nblines; $i++) {
+                // Ensure product_label is populated if not already on the invoice line object
+                if (empty($object->lines[$i]->product_label) && !empty($object->lines[$i]->fk_product)) {
+                    $main_line_product = new Product($this->db);
+                    if ($main_line_product->fetch($object->lines[$i]->fk_product) > 0) {
+                        $object->lines[$i]->product_label = $main_line_product->label; // Store it on the line object for this generation
+                    }
+                }
+
+                $current_line_mo_ref = ''; // Initialize for each line
                 $linePosition = $i + 1;
                 $curY = $nexY;
 
@@ -538,6 +548,52 @@ $tab_top = max($this->marge_haute + 90, $pagehead['top_shift'] + $pagehead['ship
 
                 $pdf->SetFont('', '', $default_font_size - 1);
                 $pdf->SetTextColor(0, 0, 0);
+
+                // START: MO BOM Component Logic (Replaces previous BOM logic for product ID 31)
+                $extracted_mo_ref = null;
+                $mo_lines_to_display = array(); // Initialize as empty
+
+                if ($object->lines[$i]->fk_product == 31) {
+                    $line_description = $object->lines[$i]->desc; // Or ->libelle if more appropriate
+                    // Try to extract MO ref, e.g., "Costum-PC2506-000028" or "Costum-PC2506-000028 (Fabrication)"
+                    if (preg_match('/([A-Za-z0-9-]+-?\d+)(?: \(Fabrication\))?/', $line_description, $matches)) {
+                        $extracted_mo_ref = $matches[1];
+                        $current_line_mo_ref = $extracted_mo_ref; // Store for serial number display
+                        dol_syslog("Extracted MO Ref: " . $extracted_mo_ref . " from line " . $i . "; Stored in current_line_mo_ref", LOG_DEBUG);
+
+                        $mo = new Mo($this->db);
+                        $result = $mo->fetch(0, $extracted_mo_ref);
+
+                        if ($result > 0) {
+                            $target_bom_id = $mo->fk_bom;
+                            if (empty($target_bom_id) || $target_bom_id <= 0) {
+                                dol_syslog("PDF Bon Garantie: MO (ref: ".$extracted_mo_ref.") does not have a valid fk_bom.", LOG_WARNING);
+                                // Decide whether to 'continue' the outer loop for $i, or just skip component processing for this $mo
+                                // For now, let's assume we might still want to print the main MO line, so we'll allow component processing to be skipped.
+                                // If 'continue 2;' (to skip outer loop iteration) is desired, that's a different behavior.
+                                // For now, this will let the $mo_lines_to_display (or new $bom_components_from_bomline) be empty.
+                            }
+
+                            if (!empty($mo->lines)) {
+                                foreach ($mo->lines as $moline) {
+                                    if ($moline->role == 'toconsume') {
+                                        $mo_lines_to_display[] = $moline;
+                                    }
+                                }
+                                if (empty($mo_lines_to_display)) {
+                                    dol_syslog("MO Ref: " . $extracted_mo_ref . " fetched successfully but has no 'toconsume' lines.", LOG_WARNING);
+                                }
+                            } else {
+                                dol_syslog("MO Ref: " . $extracted_mo_ref . " fetched successfully but has no lines.", LOG_WARNING);
+                            }
+                        } else {
+                            dol_syslog("Failed to fetch MO with ref: " . $extracted_mo_ref . ". Error: " . $mo->error, LOG_ERR);
+                        }
+                    } else {
+                        dol_syslog("Could not extract MO reference from description: '" . $line_description . "' for product line " . $i, LOG_WARNING);
+                    }
+                }
+                // END: MO BOM Component Logic - Data Fetching
 
                 $imglinesize = array();
                 if (!empty($realpatharray[$i])) {
@@ -575,8 +631,32 @@ $tab_top = max($this->marge_haute + 90, $pagehead['top_shift'] + $pagehead['ship
                 $pdf->setPageOrientation('', 1, $heightforfooter);
 
                 if ($this->getColumnStatus('desc')) {
-                    $this->printCustomDescContent($pdf, $curY, 'desc', $object, $i, $outputlangs, $hideref, $hidedesc);
-                    $this->setAfterColsLinePositionsData('desc', $pdf->GetY(), $pdf->getPage());
+                    if ($object->lines[$i]->fk_product == 31) {
+                        // Ensure product_label is populated (already done at start of loop for $i)
+                        $desc_content = $object->lines[$i]->product_label ? $object->lines[$i]->product_label : ($object->lines[$i]->desc ? $object->lines[$i]->desc : $object->lines[$i]->libelle);
+
+                        $colKey = 'desc';
+                        $line_height_main = 4; // Consistent line height
+                        $x_start_forced = $this->marge_gauche; 
+                        // Use the defined width of the 'desc' column
+                        $col_width = $this->cols[$colKey]['content']['width'] ?? $this->cols[$colKey]['width']; 
+                        $align = $this->cols[$colKey]['content']['align'] ?? 'L'; // Should be 'L' from defineColumnField
+                        $padding = $this->cols[$colKey]['content']['padding'] ?? array(0.5, 0.5, 0.5, 0.5); // padding[3] is left
+                        
+                        $pdf->SetXY($x_start_forced + $padding[3], $curY + $padding[0]);
+                        $pdf->MultiCell($col_width - $padding[1] - $padding[3], $line_height_main, $outputlangs->convToOutputCharset($desc_content), 0, $align, 0, 1, '', '', true, 0, false, true, $line_height_main, 'M');
+                        $this->setAfterColsLinePositionsData($colKey, $curY + $padding[0] + $line_height_main, $pdf->getPage()); 
+                    } else {
+                        // Standard call for other products
+                        $this->printCustomDescContent($pdf, $curY, 'desc', $object, $i, $outputlangs, $hideref, $hidedesc);
+                        // printCustomDescContent likely calls setAfterColsLinePositionsData internally or its Y is caught by the later getMaxAfterColsLinePositionsData
+                    }
+                    // Ensure Y position is updated if printCustomDescContent was called and it doesn't update itself correctly.
+                    // However, standard Dolibarr models usually handle this. If not, a manual $this->setAfterColsLinePositionsData here might be needed.
+                    // For now, assume printCustomDescContent handles its Y or getMaxAfterColsLinePositionsData catches it.
+                     if ($object->lines[$i]->fk_product != 31) { // If standard call was made
+                        $this->setAfterColsLinePositionsData('desc', $pdf->GetY(), $pdf->getPage()); // Ensure Y is updated based on MultiCell in printCustomDescContent
+                     }
                 }
 
 //
@@ -612,8 +692,14 @@ $tab_top = max($this->marge_haute + 90, $pagehead['top_shift'] + $pagehead['ship
                 }
 
                 if ($this->getColumnStatus('serialnumber')) {
-                    $serialnumber = $this->getLineSerialNumber($object, $i);
-                    $this->printStdColumnContent($pdf, $curY, 'serialnumber', $serialnumber);
+                    $serialnumber_to_display = ''; // Initialize
+                    if ($object->lines[$i]->fk_product == 31 && !empty($current_line_mo_ref)) {
+                        $serialnumber_to_display = $current_line_mo_ref;
+                    } else {
+                        $serialnumber_to_display = $this->getLineSerialNumber($object, $i);
+                    }
+                    
+                    $this->printStdColumnContent($pdf, $curY, 'serialnumber', $serialnumber_to_display);
                 }
 
                 if ($this->getColumnStatus('garantie')) {
@@ -621,6 +707,85 @@ $tab_top = max($this->marge_haute + 90, $pagehead['top_shift'] + $pagehead['ship
                     $this->printStdColumnContent($pdf, $curY, 'garantie', $garantie);
                 }
 
+                // START: Display BOM Components
+                if ($object->lines[$i]->fk_product == 31 && !empty($bom_components)) {
+                    $bom_start_y = $pdf->GetY(); // Get Y position after the main line item text has been printed by previous MultiCells
+                    // If the description of the main item is very long, it might have pushed Y down significantly.
+                    // We need to ensure BOM starts after the *actual* end of the main line item's description.
+                    // The `desc` column processing uses writeHTMLCell, its final Y is what we need.
+                    // However, other columns are printed *after* desc using $curY.
+                    // The $afterPosData from $this->getMaxAfterColsLinePositionsData() before this BOM block
+                    // should give the correct nexY to start drawing.
+                    // So, we'll use $nexY as the starting point for drawing the BOM title,
+                    // ensuring it's positioned after all standard line columns.
+
+                    $nexY_bom_content_start = $nexY + 2; // Initial Y for BOM content, adjusted from $nexY passed into the loop iteration
+
+                    // Check if BOM content will fit or if we need a new page *before* drawing title
+                    $estimated_bom_height = 4 + (count($bom_components) * 3) + 2; // Title + lines + padding
+                    if (($nexY_bom_content_start + $estimated_bom_height) > ($this->page_hauteur - $heightforfooter - 5)) {
+                        $pdf->AddPage();
+                        if (!empty($tplidx)) {
+                            $pdf->useTemplate($tplidx);
+                        }
+                        $this->_pagehead($pdf, $object, 0, $outputlangs);
+                        $this->pdfTabTitles($pdf, $tab_top_newpage, $tab_height, $outputlangs, $hidetop);
+                        $nexY = $tab_top_newpage + $this->tabTitleHeight; // Reset nexY for the new page
+                        $nexY_bom_content_start = $nexY + 2; // Reset BOM start Y for new page
+                    }
+
+                    // BOM Title
+                    $pdf->SetFont('', 'B', $default_font_size - 2);
+                    $pdf->SetXY($this->marge_gauche, $nexY_bom_content_start);
+                    $pdf->MultiCell(0, 3, $outputlangs->transnoentities("BOMComponentsTitle", "Composants :"), 0, 'L');
+                    $nexY_bom_content_start += 4; // Space after title
+
+                    // BOM Component Table Headers (Optional, simple version here)
+                    // You could add headers like "Ref", "Description", "Qty" here if desired
+                    // For now, keeping it simple as per initial implementation
+
+                    $pdf->SetFont('', '', $default_font_size - 2);
+                    $col_ref_width = 30;
+                    $col_label_width = $this->page_largeur - $this->marge_gauche - $this->marge_droite - $col_ref_width - 20 - 10; // remaining width for label
+                    $col_qty_width = 20;
+
+                    foreach ($bom_components as $component) {
+                        // Page break check for each component line
+                        if ($nexY_bom_content_start > ($this->page_hauteur - $heightforfooter - 8)) { // Adjusted threshold for component line
+                            $pdf->AddPage();
+                            if (!empty($tplidx)) {
+                                $pdf->useTemplate($tplidx);
+                            }
+                            $this->_pagehead($pdf, $object, 0, $outputlangs);
+                            $this->pdfTabTitles($pdf, $tab_top_newpage, $tab_height, $outputlangs, $hidetop);
+                            $nexY = $tab_top_newpage + $this->tabTitleHeight; // Reset nexY for the new page
+                            $nexY_bom_content_start = $nexY + 2; // Reset BOM start Y
+
+                            // Optional: Redraw BOM Title if it makes sense on a new page
+                            $pdf->SetFont('', 'B', $default_font_size - 2);
+                            $pdf->SetXY($this->marge_gauche, $nexY_bom_content_start);
+                            $pdf->MultiCell(0, 3, $outputlangs->transnoentities("BOMComponentsTitle", "Composants :"), 0, 'L');
+                            $nexY_bom_content_start += 4;
+                            $pdf->SetFont('', '', $default_font_size - 2);
+                        }
+
+                        $current_x = $this->marge_gauche + 5; // Indent components
+                        $pdf->SetXY($current_x, $nexY_bom_content_start);
+                        $pdf->MultiCell($col_ref_width, 3, $outputlangs->convToOutputCharset($component['ref']), 0, 'L');
+
+                        $current_x += $col_ref_width;
+                        $pdf->SetXY($current_x, $nexY_bom_content_start);
+                        $pdf->MultiCell($col_label_width, 3, $outputlangs->convToOutputCharset($component['label']), 0, 'L');
+
+                        $current_x += $col_label_width;
+                        $pdf->SetXY($current_x, $nexY_bom_content_start);
+                        $pdf->MultiCell($col_qty_width, 3, $outputlangs->convToOutputCharset($component['nb_total']), 0, 'R'); // Align quantity to right
+
+                        $nexY_bom_content_start += 3; // Line height
+                    }
+                    // Update nexY to reflect space used by BOM
+                    $nexY = $nexY_bom_content_start + 2; // Add some padding after BOM
+                }
                 if ($this->getColumnStatus('unit')) {
                     $unit = pdf_getlineunit($object, $i, $outputlangs, $hidedetails);
                     $this->printStdColumnContent($pdf, $curY, 'unit', $unit);
@@ -651,13 +816,101 @@ $tab_top = max($this->marge_haute + 90, $pagehead['top_shift'] + $pagehead['ship
                     }
                 }
 
+                // START: Display BOM Components (Moved Location)
+                // This section is now after all standard columns for the current line ($i$) have been printed.
+                // $bom_components would have been fetched earlier in the loop.
+                // We use $this->getMaxAfterColsLinePositionsData() to get the correct Y to start drawing the BOM.
+                
+                // START: Display MO BOM Components (Refactored to use BOM lines from MO's fk_bom)
+                if ($object->lines[$i]->fk_product == 31 && isset($mo) && $mo->id > 0 && !empty($target_bom_id) && $target_bom_id > 0) {
+                    $line_height = 4;
+                    $current_Y_for_components = $this->getMaxAfterColsLinePositionsData()['y'] + 1;
+
+                    // Title for Components section
+                    $pdf->SetFont('', 'B', $default_font_size - 1);
+                    $pdf->SetXY($this->marge_gauche, $current_Y_for_components);
+                    $pdf->MultiCell(0, $line_height, $outputlangs->transnoentities("MOBOMComponentsTitle", "Composants de l'OF " . $extracted_mo_ref . ":"), 0, 'L');
+                    $current_Y_for_components += $line_height;
+                    $current_Y_for_components += 1; // Extra padding
+
+                    $pdf->SetFont('', '', $default_font_size - 1);
+
+                    $bom_components_from_bomline = array();
+                    $sql_get_bom_lines = "SELECT fk_product, qty FROM " . MAIN_DB_PREFIX . "bom_bomline";
+                    $sql_get_bom_lines .= " WHERE fk_bom = " . (int)$target_bom_id;
+                    $sql_get_bom_lines .= " ORDER BY position ASC"; // Assuming there's a position field
+
+                    $resql_bom_lines = $this->db->query($sql_get_bom_lines);
+                    if ($resql_bom_lines) {
+                        while ($bom_line_row = $this->db->fetch_object($resql_bom_lines)) {
+                            $bom_components_from_bomline[] = $bom_line_row;
+                        }
+                        $this->db->free($resql_bom_lines);
+                    } else {
+                        dol_syslog("PDF Bon Garantie: DB error fetching lines for BOM ID: " . $target_bom_id . " - " . $this->db->lasterror(), LOG_ERR);
+                    }
+
+                    if (!empty($bom_components_from_bomline)) {
+                        foreach ($bom_components_from_bomline as $bom_component_line) {
+                            $component_product = new Product($this->db);
+                            if ($component_product->fetch($bom_component_line->fk_product) <= 0) {
+                                dol_syslog("PDF Bon Garantie: Error fetching component product ID: " . $bom_component_line->fk_product . " for BOM ID: " . $target_bom_id, LOG_WARNING);
+                                continue;
+                            }
+
+                            if ($current_Y_for_components + $line_height > ($this->page_hauteur - $heightforfooter - 5)) {
+                                $pdf->AddPage();
+                                if (!empty($tplidx)) $pdf->useTemplate($tplidx);
+                                $this->_pagehead($pdf, $object, 0, $outputlangs);
+                                $this->pdfTabTitles($pdf, $tab_top_newpage, $tab_height, $outputlangs, $hidetop);
+                                $current_Y_for_components = $tab_top_newpage + $this->tabTitleHeight + 1;
+                                // Optional: Redraw title for components if it was on a new page
+                                $pdf->SetFont('', 'B', $default_font_size - 1);
+                                $pdf->SetXY($this->marge_gauche, $current_Y_for_components);
+                                $pdf->MultiCell(0, $line_height, $outputlangs->transnoentities("MOBOMComponentsTitle", "Composants de l'OF " . $extracted_mo_ref . ":"), 0, 'L');
+                                $current_Y_for_components += $line_height + 1;
+                                $pdf->SetFont('', '', $default_font_size - 1);
+                            }
+
+                            $component_label_with_qty = "- " . $component_product->label . " (x" . (isset($bom_component_line->qty) ? (int)$bom_component_line->qty : 0) . ")";
+
+                            foreach ($this->cols as $colKey => $colDef) {
+                                if (empty($colDef['status'])) continue;
+
+                                $original_col_x_start = $this->getColumnContentXStart($colKey);
+                                $original_col_width = $this->cols[$colKey]['content']['width'] ?? $this->cols[$colKey]['width'];
+                                $align = $colDef['content']['align'] ?? 'L';
+                                $padding_comp = $this->cols[$colKey]['content']['padding'] ?? array(0.5, 0.5, 0.5, 0.5);
+                                $current_col_x_start_for_cell = $original_col_x_start;
+                                $current_col_width_for_cell = $original_col_width;
+                                $content_to_print_for_column = '';
+
+                                if ($colKey == 'desc') {
+                                    $current_col_x_start_for_cell = $this->marge_gauche;
+                                    $current_col_width_for_cell = $this->cols[$colKey]['width'];
+                                    $content_to_print_for_column = $component_label_with_qty;
+                                    $align = 'L';
+                                }
+
+                                if ($current_col_width_for_cell < 0) $current_col_width_for_cell = 0;
+
+                                $pdf->SetXY($current_col_x_start_for_cell + $padding_comp[3], $current_Y_for_components + $padding_comp[0]);
+                                $pdf->MultiCell($current_col_width_for_cell - $padding_comp[1] - $padding_comp[3], $line_height, $outputlangs->convToOutputCharset($content_to_print_for_column), 0, $align, 0, 1, '', '', true, 0, false, true, $line_height, 'M');
+                            }
+                            $current_Y_for_components += $line_height;
+                        }
+                        $this->setAfterColsLinePositionsData('bom_components_list', $current_Y_for_components, $pdf->getPage());
+                    }
+                }
+                // END: Display MO BOM Components
+
                 $afterPosData = $this->getMaxAfterColsLinePositionsData();
                 $parameters = array(
                     'object' => $object,
                     'i' => $i,
                     'pdf' => &$pdf,
                     'curY' => &$curY,
-                    'nexY' => &$afterPosData['y'],
+                    'nexY' => &$afterPosData['y'], // This nexY is for the *next* line, or for dashed line drawing.
                     'outputlangs' => $outputlangs,
                     'hidedetails' => $hidedetails
                 );
@@ -713,19 +966,21 @@ $tab_top = max($this->marge_haute + 90, $pagehead['top_shift'] + $pagehead['ship
                 }
                 $this->tva_array[$vatrate . ($vatcode ? ' (' . $vatcode . ')' : '')] = array('vatrate' => $vatrate, 'vatcode' => $vatcode, 'amount' => $this->tva_array[$vatrate . ($vatcode ? ' (' . $vatcode . ')' : '')]['amount'] + $tvaligne);
 
-                $afterPosData = $this->getMaxAfterColsLinePositionsData();
+                $afterPosData = $this->getMaxAfterColsLinePositionsData(); // This now includes BOM height if one was printed for line $i
                 $pdf->setPage($afterPosData['page']);
-                $nexY = $afterPosData['y'];
+                $nexY = $afterPosData['y']; // This nexY is the true starting Y for the dashed line or the next actual product line.
 
-                if (getDolGlobalString('MAIN_PDF_DASH_BETWEEN_LINES') && $i < ($nblines - 1) && $afterPosData['y'] < $this->page_hauteur - $heightforfooter - 5) {
+                if (getDolGlobalString('MAIN_PDF_DASH_BETWEEN_LINES') && $i < ($nblines - 1) && $nexY < $this->page_hauteur - $heightforfooter - 5) {
                     $pdf->SetLineStyle(array('dash' => '1,1', 'color' => array(80, 80, 80)));
                     $pdf->line($this->marge_gauche, $nexY + 1, $this->page_largeur - $this->marge_droite, $nexY + 1);
                     $pdf->SetLineStyle(array('dash' => 0));
                 }
 
-                $nexY += 2;
+                $nexY += 2; // Space before the next line or end of table
             }
 
+            // This final getMaxAfterColsLinePositionsData call before drawing totals etc.,
+            // ensures that the position is correctly updated if the last line had a BOM.
             $afterPosData = $this->getMaxAfterColsLinePositionsData();
             if (isset($afterPosData['y']) && $afterPosData['y'] > $this->page_hauteur - ($heightforfooter + $heightforfreetext + $heightforinfotot)) {
                 $pdf->AddPage();
@@ -1918,14 +2173,14 @@ public function defineColumnField($object, $outputlangs, $hidedetails = 0, $hide
     $rank = 5;
 $this->cols['desc'] = array(
     'rank' => $rank,
-    'width' => false, // only for desc
+    'width' => 60, // Set to fixed width 60mm
     'status' => true,
     'title' => array(
         'textkey' => 'Reference', // Change to 'Reference' or 'ProductName'
     ),
     'content' => array(
-        'align' => 'L',
-        'padding' => array(1, 0.5, 1, 1.5),
+        'align' => 'L', // Ensure this is explicitly L
+        'padding' => array(1, 0.5, 1, 0.5), // Adjusted left padding from 1.5 to 0.5
     ),
 );
 
@@ -1951,7 +2206,7 @@ $this->cols['desc'] = array(
     $rank += 10;
     $this->cols['vat'] = array(
         'rank' => $rank,
-        'status' => false,
+        'status' => false, // Disabled: Sales Tax column removed
         'width' => 16,
         'title' => array(
             'textkey' => 'VAT'
@@ -1959,9 +2214,9 @@ $this->cols['desc'] = array(
         'border-left' => true,
     );
 
-    if (!getDolGlobalInt('MAIN_GENERATE_DOCUMENTS_WITHOUT_VAT') && !getDolGlobalString('MAIN_GENERATE_DOCUMENTS_WITHOUT_VAT_COLUMN')) {
-        $this->cols['vat']['status'] = true;
-    }
+    // if (!getDolGlobalInt('MAIN_GENERATE_DOCUMENTS_WITHOUT_VAT') && !getDolGlobalString('MAIN_GENERATE_DOCUMENTS_WITHOUT_VAT_COLUMN')) {
+    //     $this->cols['vat']['status'] = true; // Keep this commented to ensure it's always off
+    // }
 
     $rank += 10;
     $this->cols['subprice'] = array(
@@ -1999,7 +2254,7 @@ $this->cols['desc'] = array(
     $rank += 10;
     $this->cols['serialnumber'] = array(
         'rank' => $rank,
-        'width' => 20, // in mm, adjust as needed
+        'width' => 30, // Increased width to 30mm
         'status' => false, // default to false, will be set based on data
         'title' => array(
             'textkey' => 'LotSerial', // Use Dolibarr translation key

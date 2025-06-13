@@ -3473,8 +3473,8 @@ $(document).ready(function() {
              selectedText = $(this).val();
         }
 
-        // Regex to identify MO pattern (e.g., MOxxxx-xxxx (Fabrication...))
-        var moRegex = /^MO\\d{4}-\\d{4} \\(Fabrication/;
+        // Regex to identify MO pattern (e.g., Costum-PCxxxx-xxxx (Fabrication...))
+        var moRegex = /^Costum-PC\\d{4}-\\d{4} \\(Fabrication/;
         // IMPORTANT: Find the correct selector for the cost price input field.
         // Try finding relative to the product input row first. Inspect the HTML structure.
         var costPriceInput = $(this).closest('tr').find('input[name^="buying_price"]'); // Common pattern for price inputs in lines
@@ -3489,8 +3489,8 @@ $(document).ready(function() {
 
         if (selectedText && moRegex.test(selectedText)) {
             console.log("MO Autofill: MO Pattern Matched");
-            // Extract MO reference (e.g., 'MO2505-0042')
-            var moRefMatch = selectedText.match(/^MO\\d{4}-\\d{4}/);
+            // Extract MO reference (e.g., 'Costum-PC2505-0042')
+            var moRefMatch = selectedText.match(/^Costum-PC\\d{4}-\\d{4}/);
             if (moRefMatch && moRefMatch[0]) {
                 var moRef = moRefMatch[0];
                 console.log("MO Autofill: Extracted MO Ref:", moRef);
@@ -3541,8 +3541,6 @@ JAVASCRIPT;
 print '</script>';
 // --- END MO Cost Price Autofill JS ---
 
-llxFooter();
-$db->close();
 
 
 
@@ -3577,7 +3575,7 @@ $(document).ready(function() {
         }
 
         // IMPORTANT: Verify this regex matches your MO description format
-        var moRegex = /^MO\\d{4}-\\d{4} \\(Fabrication/;
+        var moRegex = /^Costum-PC\\d{4}-\\d{4} \\(Fabrication/;
         
         // Use 'input[name="buying_price"]' based on your feedback. Verify with inspect tool.
         var costPriceInput = $(this).closest('tr').find('input[name="buying_price"]'); 
@@ -3590,7 +3588,7 @@ $(document).ready(function() {
 
         if (selectedText && moRegex.test(selectedText)) {
             console.log("MO Autofill: MO Pattern Matched");
-            var moRefMatch = selectedText.match(/^MO\\d{4}-\\d{4}/);
+            var moRefMatch = selectedText.match(/^Costum-PC\\d{4}-\\d{4}/);
             if (moRefMatch && moRefMatch[0]) {
                 var moRef = moRefMatch[0];
                 console.log("MO Autofill: Extracted MO Ref:", moRef);

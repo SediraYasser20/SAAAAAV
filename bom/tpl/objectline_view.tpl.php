@@ -64,7 +64,7 @@ if (empty($object) || !is_object($object)) {
 }
 
 
-global $filtertype;
+global $filtertype, $user;
 if (empty($filtertype)) {
 	$filtertype = 0;
 }
@@ -175,22 +175,28 @@ if ($filtertype != 1) { // Product
 }
 if ($filtertype != 1 || getDolGlobalString('STOCK_SUPPORTS_SERVICES')) { // Product or stock support for Services is active
 	// Qty frozen
-	print '<td class="linecolqtyfrozen nowrap right">';
-	$coldisplay++;
-	echo $line->qty_frozen ? yn($line->qty_frozen) : '';
-	print '</td>';
+	if ($user->admin) {
+		print '<td class="linecolqtyfrozen nowrap right">';
+		$coldisplay++;
+		echo $line->qty_frozen ? yn($line->qty_frozen) : '';
+		print '</td>';
+	}
 
 	// Disable stock change
-	print '<td class="linecoldisablestockchange nowrap right">';
-	$coldisplay++;
-	echo $line->disable_stock_change ? yn($line->disable_stock_change) : ''; // Yes, it is a quantity, not a price, but we just want the formatting role of function price
-	print '</td>';
+	if ($user->admin) {
+		print '<td class="linecoldisablestockchange nowrap right">';
+		$coldisplay++;
+		echo $line->disable_stock_change ? yn($line->disable_stock_change) : ''; // Yes, it is a quantity, not a price, but we just want the formatting role of function price
+		print '</td>';
+	}
 
 	// Efficiency
-	print '<td class="linecolefficiency nowrap right">';
-	$coldisplay++;
-	echo $line->efficiency;
-	print '</td>';
+	if ($user->admin) {
+		print '<td class="linecolefficiency nowrap right">';
+		$coldisplay++;
+		echo $line->efficiency;
+		print '</td>';
+	}
 }
 
 // Service and workstations are active
@@ -328,7 +334,7 @@ if ($resql) {
 				}
 				print '</td>';
 			}
-			print '<td class="linecolqtyfrozen nowrap right" id="sub_bom_qty_frozen_'.$sub_bom_line->id.'">'.$langs->trans('Yes').'</td>';
+			if ($user->admin) { print '<td class="linecolqtyfrozen nowrap right" id="sub_bom_qty_frozen_'.$sub_bom_line->id.'">'.$langs->trans('Yes').'</td>'; }
 		} else {
 			print '<td class="linecolqty nowrap right" id="sub_bom_qty_'.$sub_bom_line->id.'">'.price($sub_bom_line->qty * (float) $line->qty, 0, '', 0, 0).'</td>';
 			if (getDolGlobalString('PRODUCT_USE_UNITS')) {
@@ -339,18 +345,18 @@ if ($resql) {
 				print '</td>';
 			}
 
-			print '<td class="linecolqtyfrozen nowrap right" id="sub_bom_qty_frozen_'.$sub_bom_line->id.'">&nbsp;</td>';
+			if ($user->admin) { print '<td class="linecolqtyfrozen nowrap right" id="sub_bom_qty_frozen_'.$sub_bom_line->id.'">&nbsp;</td>'; }
 		}
 
 		// Disable stock change
 		if ($sub_bom_line->disable_stock_change > 0) {
-			print '<td class="linecoldisablestockchange nowrap right" id="sub_bom_stock_change_'.$sub_bom_line->id.'">'.$sub_bom_line->disable_stock_change.'</td>';
+			if ($user->admin) { print '<td class="linecoldisablestockchange nowrap right" id="sub_bom_stock_change_'.$sub_bom_line->id.'">'.$sub_bom_line->disable_stock_change.'</td>'; }
 		} else {
-			print '<td class="linecoldisablestockchange nowrap right" id="sub_bom_stock_change_'.$sub_bom_line->id.'">&nbsp;</td>';
+			if ($user->admin) { print '<td class="linecoldisablestockchange nowrap right" id="sub_bom_stock_change_'.$sub_bom_line->id.'">&nbsp;</td>'; }
 		}
 
 		// Efficiency
-		print '<td class="linecolefficiency nowrap right" id="sub_bom_efficiency_'.$sub_bom_line->id.'">'.$sub_bom_line->efficiency.'</td>';
+		if ($user->admin) { print '<td class="linecolefficiency nowrap right" id="sub_bom_efficiency_'.$sub_bom_line->id.'">'.$sub_bom_line->efficiency.'</td>'; }
 
 		// Cost
 		if (!empty($sub_bom->id)) {
