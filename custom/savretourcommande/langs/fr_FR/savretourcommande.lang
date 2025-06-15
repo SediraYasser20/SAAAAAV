@@ -1,0 +1,9 @@
+ModuleSavRetourCommandeName=Onglet SAV Retour Commande
+ModuleSavRetourCommandeDesc=Affiche les champs supplémentaires liés au SAV dans un onglet sur la fiche commande.
+SavRetourCommandeTabTitle=Informations SAV
+SAVOrderSAV=Est une commande SAV ?
+SAVOrderStatus=Statut SAV
+SAVOrderHistory=Historique SAV
+Yes=Oui
+No=Non
+ValueNotSet=Valeur non définie
