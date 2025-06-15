@@ -1,0 +1,15 @@
+# Dolibarr language file - Module SavTest
+# Copyright (C) YEAR YOUR_NAME_OR_COMPANY
+# This file is distributed under the same license as the Dolibarr package.
+#
+ModuleSavTestName=SAV Test Module
+ModuleSavTestDescription=Adds a custom SAV tab to Sales Orders for after-sales service tracking.
+SavTestTabTitle=SAV Test
+SavOrdersSav=SAV Active
+SavStatusLabel=SAV Status
+SavHistoryLabel=SAV History
+SavStatusPlaceholder=Status: This will be generated automatically.
+SavHistoryPlaceholder=History: This section will show automatically generated SAV history entries.
+RecordSaved=Record saved
+NotEnoughPermissions=You do not have enough permissions for this action.
+ErrorRecordNotFound=Error: Record not found.
